@@ -749,12 +749,16 @@ def find_best_csp(ticker: str, S: float, delta_min: float, delta_max: float) -> 
                 "open_interest": oi,
             })
 
+    # ARR band: MIN_ARR is a HARD floor — never return a contract below it.
     in_range = [c for c in candidates if MIN_ARR <= c["arr"] <= MAX_ARR]
     if in_range:
         return max(in_range, key=lambda x: x["arr"])
-    if candidates:
-        return min(candidates, key=lambda x: abs(x["arr"] - MIN_ARR))
-    return None
+    # Nothing in band. If everything is ABOVE the cap, step down to the
+    # lowest (safest) ARR above the cap. Anything below MIN_ARR is rejected.
+    above_cap = [c for c in candidates if c["arr"] > MAX_ARR]
+    if above_cap:
+        return min(above_cap, key=lambda x: x["arr"])
+    return None   # no contract meets the MIN_ARR floor → skip this stock
 
 
 def pre_score_csp(stock: dict) -> int:

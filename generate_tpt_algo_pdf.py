@@ -520,11 +520,13 @@ story.append(bullet("Apply BB-position-based delta filter (per-stock tier: aggre
 story.append(bullet("Calculate <b>ARR = (mid / strike) × (365 / DTE) × 100</b>"))
 story.append(spacer(0.08))
 
-story.append(Paragraph("Strike Selection Logic:", H3))
+story.append(Paragraph("Strike Selection Logic (ARR band 40–70%):", H3))
 story.append(info_box(
-    "<b>If best ARR ≤ MAX_ARR (70%):</b>  Pick the contract with the highest ARR in range.<br/>"
-    "<b>If best ARR &gt; MAX_ARR:</b>  Step down to the highest ARR that is still ≤ 70%.<br/>"
-    "<b>If all contracts exceed ARR cap:</b>  Pick the contract with the lowest delta (safest).",
+    "<b>Contracts within band (40% ≤ ARR ≤ 70%):</b>  Pick the highest ARR in band.<br/>"
+    "<b>If ALL contracts are above the cap (ARR &gt; 70%):</b>  Step down to the lowest "
+    "(safest) ARR above the cap.<br/>"
+    "<b>If NO contract reaches the floor (all ARR &lt; 40%):</b>  Skip the stock entirely — "
+    "MIN_ARR is a HARD floor, never breached. (This is why e.g. a 30%-ARR contract will not be selected.)",
     LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
 
