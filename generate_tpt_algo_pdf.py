@@ -213,8 +213,8 @@ story.append(info_box(
     "<b>Key design principles:</b>  (1) Never trade below the 200-day SMA. "
     "(2) Never sell a CSP into an earnings window. "
     "(3) Size up only on high-conviction setups (score 5/5). "
-    "(4) Close winners early — CSPs at 50% premium captured, LEAPS at +10% profit. "
-    "(5) VIX gates both deployment amount and LEAPS eligibility.", LIGHT_BLUE, MID_BLUE))
+    "(4) Close winners early — CSPs at 50% premium captured, LEAPS at +5% profit. "
+    "(5) VIX gates deployment amount; LEAPS gate is VIX ≤ 18 OR ≥ 21.", LIGHT_BLUE, MID_BLUE))
 story.append(spacer(0.15))
 
 # Architecture table
@@ -257,7 +257,7 @@ ds_rows = [
     ["Real-time stock quote",       "Tradier /markets/quotes",   "Real-time", "Current price, day change %"],
     ["Options chain (bid/ask/OI)",  "Tradier /markets/options/chains", "Real-time", "Strike selection, ARR, OI filter"],
     ["Implied Volatility (IV)",     "Tradier greeks.mid_iv",     "Real-time", "IV scoring criterion, BS delta fallback"],
-    ["Options Delta (CSP)",         "Tradier greeks.delta",      "Real-time", "Delta filter vs VIX-adjusted range"],
+    ["Options Delta (CSP)",         "Tradier greeks.delta",      "Real-time", "Delta filter vs BB-position-based range (per stock)"],
     ["Options Delta (LEAPS)",       "Black-Scholes computed",    "Real-time", "Always recomputed — Tradier greeks unreliable for 1-2yr options"],
     ["VIX",                         "Tradier $VIX.X → yfinance fallback", "Real-time", "Deploy % and LEAPS gate"],
     ["Beta vs SPY",                 "Computed from Tradier history", "Real-time", "LEAPS Bollinger Band criterion"],
@@ -281,7 +281,7 @@ story.append(spacer(0.1))
 
 phases = [
     (MID_BLUE,   "1", "VIX + Account Snapshot",            "Fetch VIX, portfolio value, cash, and all open positions from Tradier."),
-    (GREEN,      "2", "Manage Existing Positions",          "Scan open positions: close CSPs at 50% premium captured, close LEAPS at +10% profit."),
+    (GREEN,      "2", "Manage Existing Positions",          "3-rule exit system: 50% capture, 21-DTE gamma gate, 2× stop-loss (CSP); +5% profit, −50% stop-loss (LEAPS)."),
     (MID_BLUE,   "3", "Refresh Capital After Closes",       "Re-fetch account after any closes to get updated cash and buying power."),
     (GREY_DARK,  "4", "Load Tickers + Hard Filters",        "Pull approved stock list, fetch price history, apply 200 SMA and earnings hard filters."),
     (GREEN,      "5", "CSP Screening + Scoring",            "Score each stock on 5 technical signals, find best put contract, rank by score then ARR/Delta ratio."),
@@ -307,14 +307,11 @@ story.append(PageBreak())
 story.append(section_header("4.  Phase 1 — VIX & Account State", DARK_BLUE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("VIX → CSP Delta Range", H2))
-vix_delta = [
-    ["VIX Level",       "Regime",   "Put Delta Range",  "Rationale"],
-    ["> 20",            "High",     "0.10 – 0.20",      "High vol = fat premium further OTM"],
-    ["15 – 20",         "Moderate", "0.10 – 0.20",      "Standard range"],
-    ["< 15",            "Low",      "0.20 – 0.35",      "Low vol = move closer to ATM for premium"],
-]
-story.append(data_table(vix_delta[0], vix_delta[1:], [1.2*inch, 1.2*inch, 1.5*inch, 2.6*inch], MID_BLUE))
+story.append(Paragraph("CSP Delta — BB-Based Per Stock (replaces VIX-global range)", H2))
+story.append(info_box(
+    "CSP put delta is no longer determined by VIX globally. "
+    "Each stock gets its own delta range based on its Bollinger Band position at screening time. "
+    "See Phase 5 (Section 7) for the full 3-tier table.", LIGHT_BLUE, MID_BLUE))
 story.append(spacer(0.1))
 
 story.append(Paragraph("VIX → Cash Deployment Percentage", H2))
@@ -345,26 +342,34 @@ story.append(PageBreak())
 # ════════════════════════════════════════════════════════════
 # 5. PHASE 2 — POSITION MANAGEMENT
 # ════════════════════════════════════════════════════════════
-story.append(section_header("5.  Phase 2 — Position Management (Close Winners)", DARK_BLUE))
+story.append(section_header("5.  Phase 2 — Position Management (3-Rule Exit System)", DARK_BLUE))
 story.append(spacer(0.1))
 story.append(Paragraph(
-    "Before opening any new positions, the bot scans every open position and closes "
-    "those that have reached their profit target.", BODY))
+    "Before opening any new positions, the bot scans every open position. "
+    "Three independent rules can trigger a close — any one of them fires the exit:", BODY))
 story.append(spacer(0.1))
 
-story.append(Paragraph("CSP Close Rule — Short Puts", H2))
+story.append(Paragraph("CSP Exit Rules — Short Puts (checked in priority order)", H2))
 story.append(info_box(
-    "<b>Trigger:</b>  (Avg Entry Price − Current Price) / Avg Entry Price  ≥  50%<br/><br/>"
-    "<b>Meaning:</b>  We sold the put at $X per share. If it now costs ≤ $X/2 to buy back, "
-    "50% of the maximum premium has been captured.<br/><br/>"
-    "<b>Action:</b>  Place a limit BUY TO CLOSE order at the live Tradier mid-price.", LIGHT_GREEN, GREEN))
+    "<b>Rule #1 — 50% Premium Capture:</b><br/>"
+    "Trigger: (Avg Entry − Current) / Avg Entry ≥ 50%<br/>"
+    "Action: BUY TO CLOSE. Lock in the gain, free the collateral.<br/><br/>"
+    "<b>Rule #2 — 21-DTE Gamma Gate:</b><br/>"
+    "Trigger: DTE ≤ 21 AND P&amp;L ≥ −50% of premium<br/>"
+    "Action: BUY TO CLOSE. Avoid gamma explosion in final 3 weeks.<br/><br/>"
+    "<b>Rule #3 — Stop-Loss (2× Premium):</b><br/>"
+    "Trigger: Current price ≥ Avg Entry × 3.0  (loss = 2× premium received)<br/>"
+    "Action: BUY TO CLOSE. Hard cap on losses.", LIGHT_GREEN, GREEN))
 story.append(spacer(0.1))
 
-story.append(Paragraph("LEAPS Close Rule — Long Calls", H2))
+story.append(Paragraph("LEAPS Exit Rules — Long Calls", H2))
 story.append(info_box(
-    "<b>Trigger:</b>  (Current Price − Avg Entry Price) / Avg Entry Price  ≥  10%<br/><br/>"
-    "<b>Meaning:</b>  The LEAPS call we bought is up 10% or more in value.<br/><br/>"
-    "<b>Action:</b>  Place a limit SELL TO CLOSE order at the live Tradier mid-price.", LIGHT_GREEN, GREEN))
+    "<b>Rule #1 — Profit Target (+5%):</b><br/>"
+    "Trigger: (Current − Avg Entry) / Avg Entry ≥ 5%<br/>"
+    "Action: SELL TO CLOSE. Take the gain quickly, redeploy capital.<br/><br/>"
+    "<b>Rule #2 — Stop-Loss (−50%):</b><br/>"
+    "Trigger: (Current − Avg Entry) / Avg Entry ≤ −50%<br/>"
+    "Action: SELL TO CLOSE. Hard cap on LEAPS losses.", LIGHT_GREEN, GREEN))
 story.append(spacer(0.1))
 
 story.append(Paragraph("Order Execution Mechanics", H2))
@@ -395,7 +400,7 @@ tech_rows = [
     ["SMA 200",         "Mean of last 200 daily closes",        "Hard filter — must be above this"],
     ["Bollinger Upper", "SMA 20 + 2 × std(last 20 closes)",     "Reference"],
     ["Bollinger Lower", "SMA 20 − 2 × std(last 20 closes)",     "LEAPS scoring (near lower band)"],
-    ["RSI (14)",        "Wilder's smoothed 14-period RSI",      "LEAPS scoring (not overbought)"],
+    ["RSI (14)",        "Wilder's smoothed 14-period RSI",      "CSP hard gate (≥65=skip) + CSP scoring (<50=+1) + LEAPS scoring (<70=+1)"],
     ["Day Change %",    "(current − prev_close) / prev_close",  "CSP scoring (healthy pullback)"],
     ["Beta vs SPY",     "Cov(stock,SPY) / Var(SPY) — 3 months","LEAPS BB criterion (beta-adjusted)"],
 ]
@@ -408,6 +413,7 @@ hf_rows = [
     ["Filter",                      "Logic",                        "Skip if"],
     ["200-day SMA",                 "Is stock in long-term uptrend?","Price ≤ SMA 200"],
     ["Earnings in DTE window",      "Earnings report coming up?",   "Earnings date falls within next MAX_DTE (45) days"],
+    ["RSI overbought (CSP only)",   "Applied in Phase 5 per stock", "RSI ≥ 65 — stock is overbought, skip CSP screening"],
 ]
 story.append(data_table(hf_rows[0], hf_rows[1:],
              [1.8*inch, 2.2*inch, 2.5*inch], RED))
@@ -541,7 +547,7 @@ story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Execution (Phase 7)", H2))
 story.append(info_box(
-    "<b>Budget:</b>  Portfolio Value × 10%  (minus current LEAPS exposure already on the books)<br/><br/>"
+    "<b>Budget:</b>  Portfolio Value × 15%  (minus current LEAPS exposure already on the books)<br/><br/>"
     "<b>Allocation:</b>  Top-ranked first. 1 contract per pick. Full remaining budget available for each pick.<br/>"
     "Skip a pick only if the remaining budget is too small for its cost — move to the next pick.",
     LIGHT_PURPLE, PURPLE))
@@ -628,11 +634,11 @@ leaps_param_rows = [
     ["Parameter",               "Default",   "Description"],
     ["LEAPS_MIN_DTE",           "365 days",  "Minimum DTE for LEAPS contracts"],
     ["LEAPS_MAX_DTE",           "730 days",  "Maximum DTE for LEAPS contracts (1–2 years)"],
-    ["LEAPS_MIN_DELTA",         "0.80",      "Minimum call delta (deep ITM)"],
-    ["LEAPS_MAX_DELTA",         "0.99",      "Maximum call delta"],
-    ["LEAPS_TARGET_DELTA",      "0.85",      "Target delta — pick contract closest to this"],
-    ["LEAPS_VIX_LOW",           "15",        "Lower VIX bound for LEAPS gate"],
-    ["LEAPS_VIX_HIGH",          "18",        "Upper VIX bound for LEAPS gate"],
+    ["LEAPS_MIN_DELTA",         "0.70",      "Minimum call delta (lowered from 0.80)"],
+    ["LEAPS_MAX_DELTA",         "0.85",      "Maximum call delta (lowered from 0.99)"],
+    ["LEAPS_TARGET_DELTA",      "0.77",      "Target delta — pick contract closest to this (lowered from 0.85)"],
+    ["LEAPS_VIX_CALM_MAX",      "18",        "LEAPS enabled when VIX ≤ this (calm zone)"],
+    ["LEAPS_VIX_FEAR_MIN",      "21",        "LEAPS also enabled when VIX ≥ this (fear/opportunity zone)"],
     ["LEAPS_MIN_SCORE",         "2",         "Minimum LEAPS criteria score (out of 3)"],
     ["LEAPS_MIN_OI",            "50",        "Minimum OI (only enforced when OI > 0 from API)"],
     ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
@@ -641,7 +647,8 @@ leaps_param_rows = [
     ["LEAPS_HIGH_BETA",         "2.2",       "Beta above which stricter BB criterion applies"],
     ["LEAPS_BB_MAX_DIST_PCT",   "5%",        "Max % above lower BB for normal-beta stocks"],
     ["LEAPS_MIN_EARNINGS_DAYS", "15",        "Minimum days to next earnings for LEAPS safety"],
-    ["LEAPS_CLOSE_PROFIT_PCT",  "10%",       "Close LEAPS when unrealized profit reaches this"],
+    ["LEAPS_CLOSE_PROFIT_PCT",  "5%",        "Close LEAPS when unrealized profit reaches this (lowered from 25%)"],
+    ["LEAPS_STOP_LOSS_PCT",     "50%",       "Close LEAPS when unrealized loss reaches this"],
 ]
 story.append(data_table(leaps_param_rows[0], leaps_param_rows[1:],
              [2.2*inch, 1.0*inch, 3.3*inch], PURPLE))
