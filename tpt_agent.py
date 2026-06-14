@@ -102,6 +102,9 @@ MIN_OPEN_INTEREST = int(os.getenv("MIN_OPEN_INTEREST", "50"))
 # — Hard filters —
 FILTER_BELOW_200_SMA          = os.getenv("FILTER_BELOW_200_SMA",          "true").lower() == "true"
 FILTER_EARNINGS_IN_DTE_WINDOW = os.getenv("FILTER_EARNINGS_IN_DTE_WINDOW", "true").lower() == "true"
+# Earnings hard-filter look-ahead (days). Applies to both CSP and LEAPS.
+# Decoupled from MAX_DTE so it can be tuned independently.
+EARNINGS_FILTER_DAYS          = int(os.getenv("EARNINGS_FILTER_DAYS", "10"))
 
 # — Scoring (max 5 pts) —
 SCORE_ABOVE_50_SMA       = os.getenv("SCORE_ABOVE_50_SMA",    "true").lower() == "true"
@@ -670,9 +673,9 @@ def screen_all_stocks(tickers: list[str]) -> list[dict]:
         if FILTER_BELOW_200_SMA and tech["price"] < tech["sma200"]:
             log(f"  ✗ {ticker}: below 200d SMA")
             return None
-        # Hard filter 2: Earnings in DTE window (applies to both)
-        if has_earnings_in_window(ticker, MAX_DTE):
-            log(f"  ✗ {ticker}: earnings in window")
+        # Hard filter 2: Earnings within EARNINGS_FILTER_DAYS (applies to both)
+        if has_earnings_in_window(ticker, EARNINGS_FILTER_DAYS):
+            log(f"  ✗ {ticker}: earnings within {EARNINGS_FILTER_DAYS}d")
             return None
         return {
             "ticker":  ticker,

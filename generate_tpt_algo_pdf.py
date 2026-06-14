@@ -259,7 +259,7 @@ ds_rows = [
     ["Options Delta (CSP)",         "Tradier greeks.delta",      "Real-time", "Delta filter vs BB-position-based range (per stock)"],
     ["Options Delta (LEAPS)",       "Black-Scholes computed",    "Real-time", "Always recomputed — Tradier greeks unreliable for 1-2yr options"],
     ["VIX",                         "Tradier $VIX.X → yfinance fallback", "Real-time", "Deploy % and LEAPS gate"],
-    ["Earnings dates",              "yfinance (only yfinance use)", "Daily",  "Hard filter — skip if earnings in DTE window"],
+    ["Earnings dates",              "yfinance (only yfinance use)", "Daily",  "Hard filter — skip if earnings within EARNINGS_FILTER_DAYS (10)"],
     ["Option expirations",          "Tradier /markets/options/expirations", "Real-time", "Finding valid DTE windows"],
     ["Live mid-price at execution", "Tradier /markets/quotes",   "Real-time", "Limit price on every order placed"],
 ]
@@ -448,7 +448,7 @@ story.append(Paragraph("Hard Filters", H2))
 hf_rows = [
     ["Filter",                      "Logic",                        "Skip if"],
     ["200-day SMA",                 "Is stock in long-term uptrend?","Price ≤ SMA 200"],
-    ["Earnings in DTE window",      "Earnings report coming up?",   "Earnings date falls within next MAX_DTE (45) days"],
+    ["Earnings (CSP + LEAPS)",      "Earnings report imminent?",    "Earnings date falls within next EARNINGS_FILTER_DAYS (10) days"],
     ["RSI overbought (CSP only)",   "Applied in Phase 5 per stock", "RSI ≥ 65 — stock is overbought, skip CSP screening"],
 ]
 story.append(data_table(hf_rows[0], hf_rows[1:],
@@ -661,6 +661,7 @@ csp_param_rows = [
     ["Parameter",               "Default", "Description"],
     ["MIN_DTE",                   "30",        "Minimum days to expiration for CSP puts"],
     ["MAX_DTE",                   "45",        "Maximum days to expiration for CSP puts"],
+    ["EARNINGS_FILTER_DAYS",      "10",        "Earnings hard-filter look-ahead — skip stock if earnings within this many days (applies to BOTH CSP and LEAPS; decoupled from MAX_DTE)"],
     ["MIN_ARR",                   "40%",       "Minimum annualized return on risk to qualify"],
     ["MAX_ARR",                   "70%",       "ARR cap — step down to safer strike if exceeded"],
     ["MIN_OPEN_INTEREST",         "50",        "Minimum open interest for liquidity (rejects OI = 0 — CSP needs real liquidity)"],
@@ -774,7 +775,7 @@ flow = [
     ("For each ticker (parallel, ThreadPoolExecutor — MAX_WORKERS=6):", GREY_DARK),
     ("    • Fetch 310 days OHLCV + quote from Tradier  →  compute SMA20/50/200, BB, RSI", GREY_DARK),
     ("    • HARD FILTER 1: skip if price ≤ SMA 200", RED),
-    ("    • HARD FILTER 2: skip if earnings within MAX_DTE days (yfinance)", RED),
+    ("    • HARD FILTER 2: skip if earnings within EARNINGS_FILTER_DAYS=10 (yfinance)", RED),
     ("─── CSP SCORING (parallel) ───", GREEN),
     ("For each stock passing hard filters:", GREEN),
     ("    • Hard gate: RSI ≥ 65 → skip (overbought)", GREEN),
