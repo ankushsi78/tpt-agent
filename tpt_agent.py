@@ -1479,7 +1479,16 @@ def run():
         result = screen_ticker_csp(stock)
         if result:
             csp_candidates.append(result)
-    csp_candidates.sort(key=lambda x: (-x["score"], -x["arr"]))
+    # Sort: score DESC → ARR/Delta ratio DESC (normalized risk-adjusted return)
+    #       → DTE DESC (more time cushion) → ARR DESC (final tie-breaker)
+    # ARR/Delta ratio rewards higher premium per unit of directional risk taken,
+    # correctly ranking e.g. delta=0.14 ARR=69% above delta=0.20 ARR=47%.
+    csp_candidates.sort(key=lambda x: (
+        -x["score"],
+        -(x["arr"] / x["delta"]) if x.get("delta", 0) > 0 else 0,
+        -x.get("dte", 0),
+        -x["arr"],
+    ))
     top_csps = csp_candidates[:TOP_N_CSP]
     log(f"  {len(csp_candidates)} qualified → top {len(top_csps)} selected: "
         f"{[t['ticker'] for t in top_csps]}")
