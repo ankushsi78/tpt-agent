@@ -7,20 +7,28 @@ Data sources (all real-time via Tradier):
   • Stock quotes and OHLCV history  → Tradier markets/quotes + markets/history
   • Options chains, IV, Greeks      → Tradier markets/options/chains (greeks=true)
   • VIX                             → Tradier markets/quotes ($VIX.X), yfinance fallback
-  • Beta vs SPY                     → Computed from Tradier daily history
   • Earnings dates                  → yfinance only (Tradier has no earnings calendar)
+
+Performance: per-ticker screening is parallelized (ThreadPoolExecutor,
+MAX_WORKERS); option expirations are cached per ticker; LEAPS fetch only
+the farthest expiry; CSP/LEAPS gate on stock-level score before any chain
+fetch. Typical full run ≈ 1 minute.
 
 Order execution → Tradier sandbox (paper trading account VA54665450)
 Discord         → #beta-ai-trades only (hardcoded webhook)
 """
 
-import os, math, logging, re, time
+import os, math, logging, re, time, threading
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
 from io import StringIO
 from scipy.stats import norm
+from concurrent.futures import ThreadPoolExecutor
+
+# Concurrency for per-ticker screening (network-bound Tradier calls)
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "6"))
 
 # ── Auto-load .env (for direct runs; launchd uses plist env vars) ─────────────
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -151,15 +159,23 @@ RF_RATE = 0.045   # risk-free rate for Black-Scholes
 
 def tradier_get(path: str, params: dict = None) -> dict:
     url = f"{TRADIER_BASE_URL}/{path.lstrip('/')}"
-    try:
-        r = requests.get(url, headers=TRADIER_HEADERS, params=params, timeout=15)
-        if r.status_code != 200:
+    # Retry on rate-limit (429) / transient 5xx — important under concurrency
+    for attempt in range(4):
+        try:
+            r = requests.get(url, headers=TRADIER_HEADERS, params=params, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 429 or r.status_code >= 500:
+                wait = 0.5 * (2 ** attempt)   # 0.5s, 1s, 2s, 4s
+                log(f"  Tradier GET {path} → HTTP {r.status_code}, retry in {wait:.1f}s")
+                time.sleep(wait)
+                continue
             log(f"  Tradier GET {path} → HTTP {r.status_code}: {r.text[:200]}")
             return {}
-        return r.json()
-    except Exception as e:
-        log(f"  Tradier GET error {path}: {e}")
-        return {}
+        except Exception as e:
+            log(f"  Tradier GET error {path}: {e}")
+            time.sleep(0.5 * (2 ** attempt))
+    return {}
 
 
 def tradier_post_order(form_data: dict) -> tuple[bool, dict]:
@@ -496,18 +512,33 @@ def bs_put_delta_abs(S, K, T, r, sigma) -> float:
 # TRADIER OPTIONS CHAIN HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Per-run cache: option expirations are fetched in BOTH the CSP and LEAPS
+# phases for the same ticker — cache so we make that call only once per ticker.
+_EXP_CACHE: dict[str, list[str]] = {}
+_EXP_CACHE_LOCK = threading.Lock()
+
+
 def get_option_expirations(ticker: str) -> list[str]:
+    cached = _EXP_CACHE.get(ticker)
+    if cached is not None:
+        return cached
+
     resp = tradier_get("markets/options/expirations", {
         "symbol":          ticker,
         "includeAllRoots": "true",
     })
     exps = resp.get("expirations")
     if not exps or exps == "null":
-        return []
-    dates = exps.get("date", [])
-    if isinstance(dates, str):
-        dates = [dates]
-    return sorted(dates)
+        result = []
+    else:
+        dates = exps.get("date", [])
+        if isinstance(dates, str):
+            dates = [dates]
+        result = sorted(dates)
+
+    with _EXP_CACHE_LOCK:
+        _EXP_CACHE[ticker] = result
+    return result
 
 
 def get_option_chain(ticker: str, expiration: str) -> list[dict]:
@@ -625,31 +656,25 @@ def screen_all_stocks(tickers: list[str]) -> list[dict]:
       • RSI gate is CSP-specific — applied later in screen_ticker_csp()
     Returns list of stock dicts ready for both CSP and LEAPS screening.
     """
-    results = []
-    for ticker in tickers:
-        # Skip sector header rows from the approved list
-        if not ticker.replace(".", "").isalpha() or len(ticker) > 6:
-            continue
+    # Only real tickers (drop sector-header rows from the approved sheet)
+    valid = [t for t in tickers if t.replace(".", "").isalpha() and len(t) <= 6]
 
+    def _screen_one(ticker: str) -> dict | None:
         quote = get_stock_quote(ticker)
         if not quote or quote["price"] <= 0:
-            continue
-
+            return None
         tech = compute_technicals(ticker, quote)
         if not tech:
-            continue
-
+            return None
         # Hard filter 1: 200 SMA (applies to both CSP and LEAPS)
         if FILTER_BELOW_200_SMA and tech["price"] < tech["sma200"]:
             log(f"  ✗ {ticker}: below 200d SMA")
-            continue
-
+            return None
         # Hard filter 2: Earnings in DTE window (applies to both)
         if has_earnings_in_window(ticker, MAX_DTE):
             log(f"  ✗ {ticker}: earnings in window")
-            continue
-
-        results.append({
+            return None
+        return {
             "ticker":  ticker,
             "price":   tech["price"],
             "day_chg": tech["day_chg"],
@@ -660,11 +685,12 @@ def screen_all_stocks(tickers: list[str]) -> list[dict]:
             "bb_mid":  tech["bb_mid"],
             "bb_up":   tech["bb_up"],
             "rsi":     tech.get("rsi", 50.0),
-        })
-        time.sleep(0.3)   # Tradier rate limit
+        }
 
-    log(f"  {len(results)}/{len([t for t in tickers if t.replace('.','').isalpha() and len(t)<=6])} "
-        f"tickers passed shared hard filters")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        results = [r for r in ex.map(_screen_one, valid) if r is not None]
+
+    log(f"  {len(results)}/{len(valid)} tickers passed shared hard filters")
     return results
 
 
@@ -731,6 +757,31 @@ def find_best_csp(ticker: str, S: float, delta_min: float, delta_max: float) -> 
     return None
 
 
+def pre_score_csp(stock: dict) -> int:
+    """
+    Stock-level pre-score (max 3) — computed WITHOUT fetching an option chain.
+    Counts the 3 score_csp criteria that depend only on stock data:
+      • Price below BB midline
+      • Healthy pullback today (0.5–5%)
+      • RSI < 50
+
+    The other 2 score_csp points (strike > 50d SMA, IV ≥ 40%) are
+    contract-level. Since MIN_SCORE_TO_TRADE = 3 and at most 2 contract
+    points can be added, any stock with pre-score < 1 can never reach 3 —
+    so we skip the (expensive) chain fetch for those. This is
+    correctness-preserving: it cannot drop a stock that would qualify.
+    """
+    s = 0
+    if SCORE_BELOW_MID_BB and stock["price"] < stock["bb_mid"]:
+        s += 1
+    if (SCORE_DOWN_TODAY and stock["day_chg"] < 0
+            and SCORE_DOWN_TODAY_MIN_PCT <= abs(stock["day_chg"]) <= SCORE_DOWN_TODAY_MAX_PCT):
+        s += 1
+    if stock.get("rsi", 99) < SCORE_RSI_OVERSOLD:
+        s += 1
+    return s
+
+
 def score_csp(stock: dict, contract: dict) -> tuple[int, list[str]]:
     """
     Score 0–5.  Criteria:
@@ -769,9 +820,16 @@ def screen_ticker_csp(stock: dict) -> dict | None:
         log(f"  ✗ {ticker}: RSI={rsi:.1f} ≥ {CSP_RSI_OVERBOUGHT} — overbought, skip CSP")
         return None
 
+    # Pre-score gate: skip the chain fetch for stocks that mathematically
+    # cannot reach MIN_SCORE_TO_TRADE even with both contract-level points.
+    pre = pre_score_csp(stock)
+    if pre + 2 < MIN_SCORE_TO_TRADE:
+        log(f"  ✗ {ticker}: pre-score {pre} too low — skip chain fetch")
+        return None
+
     # Per-stock BB-based delta range (3 tiers)
     delta_min, delta_max, delta_label = delta_range_for_stock(stock)
-    log(f"  CSP {ticker}: RSI={rsi:.1f}  {delta_label}")
+    log(f"  CSP {ticker}: RSI={rsi:.1f}  pre-score={pre}  {delta_label}")
 
     contract = find_best_csp(ticker, stock["price"], delta_min, delta_max)
     if not contract:
@@ -805,132 +863,105 @@ def screen_ticker_csp(stock: dict) -> dict | None:
 # LEAPS SCREENING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_beta(ticker: str) -> float:
-    """3-month beta vs SPY computed from Tradier daily history."""
-    try:
-        start = (datetime.today() - timedelta(days=95)).strftime("%Y-%m-%d")
-        end   = datetime.today().strftime("%Y-%m-%d")
+def _leaps_contract_from_chain(stock: dict, exp_str: str, dte: int) -> dict | None:
+    """Find the best LEAPS call within a single expiration's chain, or None."""
+    ticker     = stock["ticker"]
+    S          = stock["price"]
+    T          = dte / 365.0
+    chain      = get_option_chain(ticker, exp_str)
+    qualifying = []
 
-        stock_df = get_stock_history(ticker, calendar_days=95)
-        if stock_df.empty or len(stock_df) < 20:
-            return 1.0
+    for c in chain:
+        if c.get("option_type") != "call":
+            continue
+        oi = int(c.get("open_interest", 0) or 0)
+        if 0 < oi < LEAPS_MIN_OI:   # 0 = data unavailable, allow through
+            continue
+        mid = _contract_mid(c)
+        if not mid or mid <= 0:
+            continue
 
-        spy_resp = tradier_get("markets/history", {
-            "symbol": "SPY", "interval": "daily", "start": start, "end": end,
+        K      = float(c.get("strike", 0))
+        greeks = c.get("greeks") or {}
+
+        # Prefer Tradier's own delta; fall back to Black-Scholes
+        raw_delta = greeks.get("delta")
+        if raw_delta is not None:
+            try:
+                delta_val = abs(float(raw_delta))
+                iv        = _contract_iv(c) or 0.45
+            except (TypeError, ValueError):
+                delta_val = None
+        else:
+            delta_val = None
+
+        if delta_val is None:
+            iv_raw = greeks.get("mid_iv") or greeks.get("smv_vol")
+            iv = float(iv_raw) if (iv_raw and float(iv_raw) >= 0.20) else 0.45
+            delta_val = bs_call_delta(S, K, T, RF_RATE, iv)
+
+        if not (LEAPS_MIN_DELTA <= delta_val <= LEAPS_MAX_DELTA):
+            continue
+
+        qualifying.append({
+            "ticker":            ticker,
+            "stock_price":       S,
+            "day_chg":           stock["day_chg"],
+            "sma20":             stock["sma20"],
+            "sma50":             stock["sma50"],
+            "sma200":            stock["sma200"],
+            "expiration":        exp_str,
+            "dte":               dte,
+            "strike":            K,
+            "bid":               round(float(c.get("bid",  0) or 0), 2),
+            "ask":               round(float(c.get("ask",  0) or 0), 2),
+            "mid":               round(mid, 2),
+            "cost_per_contract": round(mid * 100, 2),
+            "delta":             round(delta_val, 3),
+            "iv":                round(iv * 100, 1),
+            "otm_pct":           round((K - S) / S * 100, 1),
+            "open_interest":     oi,
+            "breakeven":         round(K + mid, 2),
+            "pct_to_breakeven":  round((K + mid - S) / S * 100, 1),
+            "option_symbol":     c.get("symbol", ""),
         })
-        spy_hist = spy_resp.get("history")
-        if not spy_hist or spy_hist == "null":
-            return 1.0
-        spy_days = spy_hist.get("day", [])
-        if isinstance(spy_days, dict):
-            spy_days = [spy_days]
-        spy_df = pd.DataFrame(spy_days)
-        if spy_df.empty or "close" not in spy_df.columns:
-            return 1.0
 
-        spy_df["close"] = spy_df["close"].astype(float)
-        spy_df["date"]  = pd.to_datetime(spy_df["date"])
-
-        # Align both series on date and compute returns
-        stock_df = stock_df.copy()
-        stock_df["date"] = pd.to_datetime(stock_df["date"])
-        merged = pd.merge(
-            stock_df[["date", "close"]].rename(columns={"close": "s"}),
-            spy_df[["date", "close"]].rename(columns={"close": "m"}),
-            on="date",
-        ).sort_values("date")
-
-        if len(merged) < 20:
-            return 1.0
-
-        sr  = merged["s"].pct_change().dropna()
-        mr  = merged["m"].pct_change().dropna()
-        cov = sr.cov(mr)
-        var = mr.var()
-        return round(float(cov / var), 2) if var != 0 else 1.0
-    except Exception:
-        return 1.0
+    if not qualifying:
+        return None
+    # Pick the contract closest to the target delta within this expiration
+    return min(qualifying, key=lambda x: abs(x["delta"] - LEAPS_TARGET_DELTA))
 
 
 def find_best_leaps(stock: dict) -> dict | None:
-    ticker      = stock["ticker"]
-    S           = stock["price"]
-    today       = datetime.today()
-    expirations = get_option_expirations(ticker)
-    qualifying  = []
+    """
+    Fetch the FARTHEST available expiration in the 365–730 DTE window first
+    (max time value, lowest theta — ideal for stock-replacement LEAPS).
+    Only if it yields no qualifying contract do we fall back to the
+    next-farthest, and so on. This fetches ~1 chain per stock instead of
+    one per expiration across the whole 1–2 year window.
+    """
+    ticker = stock["ticker"]
+    today  = datetime.today()
 
-    for exp_str in expirations:
+    # Build (dte, exp) list for expirations inside the LEAPS window, farthest first
+    windowed = []
+    for exp_str in get_option_expirations(ticker):
         try:
             dte = (datetime.strptime(exp_str, "%Y-%m-%d") - today).days
         except ValueError:
             continue
-        if not (LEAPS_MIN_DTE <= dte <= LEAPS_MAX_DTE):
-            continue
+        if LEAPS_MIN_DTE <= dte <= LEAPS_MAX_DTE:
+            windowed.append((dte, exp_str))
+    windowed.sort(reverse=True)   # farthest expiration first
 
-        T     = dte / 365.0
-        chain = get_option_chain(ticker, exp_str)
-
-        for c in chain:
-            if c.get("option_type") != "call":
-                continue
-            oi = int(c.get("open_interest", 0) or 0)
-            if 0 < oi < LEAPS_MIN_OI:   # 0 = data unavailable, allow through
-                continue
-            mid = _contract_mid(c)
-            if not mid or mid <= 0:
-                continue
-
-            K      = float(c.get("strike", 0))
-            greeks = c.get("greeks") or {}
-
-            # Prefer Tradier's own delta; fall back to Black-Scholes
-            raw_delta = greeks.get("delta")
-            if raw_delta is not None:
-                try:
-                    delta_val = abs(float(raw_delta))
-                    iv        = _contract_iv(c) or 0.45
-                except (TypeError, ValueError):
-                    delta_val = None
-            else:
-                delta_val = None
-
-            if delta_val is None:
-                iv_raw = greeks.get("mid_iv") or greeks.get("smv_vol")
-                iv = float(iv_raw) if (iv_raw and float(iv_raw) >= 0.20) else 0.45
-                delta_val = bs_call_delta(S, K, T, RF_RATE, iv)
-
-            if not (LEAPS_MIN_DELTA <= delta_val <= LEAPS_MAX_DELTA):
-                continue
-
-            qualifying.append({
-                "ticker":            ticker,
-                "stock_price":       S,
-                "day_chg":           stock["day_chg"],
-                "sma20":             stock["sma20"],
-                "sma50":             stock["sma50"],
-                "sma200":            stock["sma200"],
-                "expiration":        exp_str,
-                "dte":               dte,
-                "strike":            K,
-                "bid":               round(float(c.get("bid",  0) or 0), 2),
-                "ask":               round(float(c.get("ask",  0) or 0), 2),
-                "mid":               round(mid, 2),
-                "cost_per_contract": round(mid * 100, 2),
-                "delta":             round(delta_val, 3),
-                "iv":                round(iv * 100, 1),
-                "otm_pct":           round((K - S) / S * 100, 1),
-                "open_interest":     oi,
-                "breakeven":         round(K + mid, 2),
-                "pct_to_breakeven":  round((K + mid - S) / S * 100, 1),
-                "option_symbol":     c.get("symbol", ""),
-            })
-
-    if not qualifying:
-        return None
-    chosen = min(qualifying, key=lambda x: abs(x["delta"] - LEAPS_TARGET_DELTA))
-    log(f"    LEAPS: {chosen['expiration']} ${chosen['strike']:.0f} Call  "
-        f"Δ={chosen['delta']:.3f}  DTE={chosen['dte']}  cost=${chosen['cost_per_contract']:.0f}")
-    return chosen
+    for dte, exp_str in windowed:
+        chosen = _leaps_contract_from_chain(stock, exp_str, dte)
+        if chosen:
+            log(f"    LEAPS: {chosen['expiration']} ${chosen['strike']:.0f} Call  "
+                f"Δ={chosen['delta']:.3f}  DTE={chosen['dte']}  "
+                f"cost=${chosen['cost_per_contract']:.0f}")
+            return chosen
+    return None
 
 
 def score_leaps(stock: dict, rsi: float) -> tuple[int, list[str]]:
@@ -947,25 +978,26 @@ def score_leaps(stock: dict, rsi: float) -> tuple[int, list[str]]:
 def screen_ticker_leaps(stock: dict) -> dict | None:
     """
     LEAPS screening using pre-computed stock data from screen_all_stocks().
-    Beta is still computed here (LEAPS-specific, not needed for CSP).
+    Score FIRST (all 3 criteria are stock-level) and gate before fetching
+    any option chain — so we only pay the chain cost for stocks that qualify.
     """
     ticker = stock["ticker"]
     rsi    = stock.get("rsi", 50.0)
-    log(f"  LEAPS {ticker}: RSI={rsi:.1f}")
 
-    beta     = get_beta(ticker)
+    # Score gate first — no option calls needed (all criteria are stock-level)
+    leaps_score, leaps_reasons = score_leaps(stock, rsi)
+    if leaps_score < LEAPS_MIN_SCORE:
+        log(f"  ✗ {ticker}: LEAPS score {leaps_score} < {LEAPS_MIN_SCORE} — skip chain fetch")
+        return None
+
+    log(f"  LEAPS {ticker}: RSI={rsi:.1f}  score={leaps_score}/3 — fetching chain")
     contract = find_best_leaps(stock)
     if not contract:
         return None
 
-    leaps_score, leaps_reasons = score_leaps(stock, rsi)
-    if leaps_score < LEAPS_MIN_SCORE:
-        log(f"    {ticker}: LEAPS score {leaps_score} < {LEAPS_MIN_SCORE} — skip")
-        return None
-
     log(f"    {ticker} LEAPS ✅  score={leaps_score}/3  Δ={contract['delta']:.3f}  cost=${contract['cost_per_contract']:.0f}")
     return {**contract, "leaps_score": leaps_score, "leaps_reasons": leaps_reasons,
-            "rsi": rsi, "beta": beta}
+            "rsi": rsi}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1548,11 +1580,8 @@ def run():
 
     # ── Phase 5: CSP scoring + contract selection ─────────────────────────────
     log("Phase 5: CSP screening")
-    csp_candidates = []
-    for stock in stock_universe:
-        result = screen_ticker_csp(stock)
-        if result:
-            csp_candidates.append(result)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        csp_candidates = [r for r in ex.map(screen_ticker_csp, stock_universe) if r]
     # Sort: score DESC → ARR/Delta ratio DESC (normalized risk-adjusted return)
     #       → DTE DESC (more time cushion) → ARR DESC (final tie-breaker)
     # ARR/Delta ratio rewards higher premium per unit of directional risk taken,
@@ -1571,11 +1600,8 @@ def run():
     log("Phase 6: LEAPS screening")
     leaps_candidates = []
     if vix_ok_leaps:
-        for stock in stock_universe:
-            result = screen_ticker_leaps(stock)
-            if result:
-                leaps_candidates.append(result)
-            time.sleep(0.3)   # extra pause for LEAPS chain fetches
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            leaps_candidates = [r for r in ex.map(screen_ticker_leaps, stock_universe) if r]
         leaps_candidates.sort(key=lambda x: (-x.get("leaps_score", 0), x.get("rsi", 99)))
         top_leaps = leaps_candidates[:TOP_N_LEAPS]
         log(f"  {len(leaps_candidates)} qualified → top {len(top_leaps)} selected: "
