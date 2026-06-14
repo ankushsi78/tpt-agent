@@ -507,7 +507,7 @@ story.append(Paragraph("Step 4 — Find Best Put Contract (Tradier Options Chain
 story.append(Paragraph(
     "For each expiration date between MIN_DTE (30) and MAX_DTE (45) days:", BODY))
 story.append(bullet("Fetch full options chain from Tradier with <b>greeks=true</b>"))
-story.append(bullet("Filter puts: Open Interest ≥ 100 (OI = 0 = data unavailable, allowed through),  valid bid/ask quote"))
+story.append(bullet("Filter puts: Open Interest ≥ 50 (rejects OI = 0),  valid bid/ask quote"))
 story.append(bullet("Get delta from <b>Tradier greeks.delta</b>; fallback to Black-Scholes if null"))
 story.append(bullet("Apply BB-position-based delta filter (per-stock tier: aggressive / moderate / conservative)"))
 story.append(bullet("Calculate <b>ARR = (mid / strike) × (365 / DTE) × 100</b>"))
@@ -649,7 +649,7 @@ csp_param_rows = [
     ["MAX_DTE",                   "45",        "Maximum days to expiration for CSP puts"],
     ["MIN_ARR",                   "40%",       "Minimum annualized return on risk to qualify"],
     ["MAX_ARR",                   "70%",       "ARR cap — step down to safer strike if exceeded"],
-    ["MIN_OPEN_INTEREST",         "100",       "Min OI for liquidity (only enforced when OI > 0 from API; OI = 0 allowed through)"],
+    ["MIN_OPEN_INTEREST",         "50",        "Minimum open interest for liquidity (rejects OI = 0 — CSP needs real liquidity)"],
     ["CSP_RSI_OVERBOUGHT",        "65",        "Hard gate — skip stock if RSI ≥ this (overbought)"],
     ["CSP_DELTA_NEAR_LOWER_MIN/MAX", "0.25/0.35", "Delta range when price ≤ lower BB + 3% (aggressive)"],
     ["CSP_DELTA_MID_ZONE_MIN/MAX",   "0.15/0.25", "Delta range when price between lower and mid BB (moderate)"],
@@ -757,7 +757,7 @@ flow = [
     ("    • BB-based delta range: near lower BB=0.25–0.35 / between BBs=0.15–0.25 / above mid=0.08–0.15", GREEN),
     ("    • Score: above 50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • Fetch put chain from Tradier (greeks=true)", GREEN),
-    ("    • Filter puts: OI≥100 (OI=0 allowed through), delta in BB-tier range, ARR 40–70%", GREEN),
+    ("    • Filter puts: OI≥50 (rejects OI=0), delta in BB-tier range, ARR 40–70%", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
     ("─── LEAPS SCORING (only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),

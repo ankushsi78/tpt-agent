@@ -89,7 +89,7 @@ CSP_RSI_OVERBOUGHT = float(os.getenv("CSP_RSI_OVERBOUGHT", "65"))
 # — CSP ARR target (cap raised to 70%) —
 MIN_ARR           = float(os.getenv("MIN_ARR",  "40"))
 MAX_ARR           = float(os.getenv("MAX_ARR",  "70"))   # raised from 60
-MIN_OPEN_INTEREST = int(os.getenv("MIN_OPEN_INTEREST", "100"))
+MIN_OPEN_INTEREST = int(os.getenv("MIN_OPEN_INTEREST", "50"))
 
 # — Hard filters —
 FILTER_BELOW_200_SMA          = os.getenv("FILTER_BELOW_200_SMA",          "true").lower() == "true"
@@ -692,7 +692,7 @@ def find_best_csp(ticker: str, S: float, delta_min: float, delta_max: float) -> 
             if c.get("option_type") != "put":
                 continue
             oi  = int(c.get("open_interest", 0) or 0)
-            if 0 < oi < MIN_OPEN_INTEREST:   # 0 = data unavailable, allow through
+            if oi < MIN_OPEN_INTEREST:   # rejects OI=0 too — CSP needs real liquidity
                 continue
             mid = _contract_mid(c)
             if not mid or mid <= 0:
