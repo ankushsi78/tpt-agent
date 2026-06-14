@@ -285,8 +285,8 @@ phases = [
     (MID_BLUE,   "3", "Refresh Capital After Closes",       "Re-fetch account after any closes to get updated cash and buying power."),
     (GREY_DARK,  "4", "Load Tickers + Hard Filters",        "Pull approved stock list, fetch price history, apply 200 SMA and earnings hard filters."),
     (GREEN,      "5", "CSP Screening + Scoring",            "Score each stock on 5 technical signals, find best put contract, rank by score then ARR/Delta ratio."),
-    (PURPLE,     "6", "LEAPS Screening",                    "If VIX is 15–18: score stocks on 3 LEAPS criteria, find best deep ITM call contract."),
-    (PURPLE,     "7", "Execute LEAPS Trades",               "Top-ranked first, 1 contract per pick, until 10% portfolio budget exhausted."),
+    (PURPLE,     "6", "LEAPS Screening",                    "If VIX ≤ 18 or ≥ 21: score stocks on 3 LEAPS criteria, find best deep ITM call contract."),
+    (PURPLE,     "7", "Execute LEAPS Trades",               "Top-ranked first, 1 contract per pick, until 15% portfolio budget exhausted."),
     (GREEN,      "8", "Execute CSP Trades",                 "Top-scored first, 1 contract per pick, until VIX-adjusted cash budget exhausted."),
     (MID_BLUE,   "9", "Post Discord Summary",               "Post run summary, open positions table, CSP summary table, LEAPS summary table."),
 ]
@@ -331,13 +331,14 @@ story.append(spacer(0.1))
 
 story.append(Paragraph("Budget Calculations", H2))
 story.append(bullet("<b>CSP Budget</b> = Cash × VIX deploy %"))
-story.append(bullet("<b>LEAPS Budget</b> = Portfolio Value × 10% − Current LEAPS Exposure  (never exceeds 10% of portfolio total)"))
-story.append(bullet("<b>LEAPS VIX Gate</b> = Only screen and execute LEAPS when <b>15 &lt; VIX &lt; 18</b>"))
+story.append(bullet("<b>LEAPS Budget</b> = Portfolio Value × 15% − Current LEAPS Exposure  (never exceeds 15% of portfolio total)"))
+story.append(bullet("<b>LEAPS VIX Gate</b> = Screen and execute LEAPS when <b>VIX ≤ 18  OR  VIX ≥ 21</b>"))
 story.append(spacer(0.05))
 story.append(info_box(
-    "<i>Rationale for LEAPS VIX gate 15–18:</i> Below 15 means the market is complacent "
-    "and stocks haven't pulled back — poor LEAPS entry. Above 18 signals stress, "
-    "which inflates option premiums and increases risk for long options.", LIGHT_PURPLE, PURPLE))
+    "<i>Rationale for LEAPS VIX gate (≤18 or ≥21):</i> VIX ≤ 18 = calm market, "
+    "stocks fairly valued — ideal LEAPS entry. VIX ≥ 21 = fear-driven selloff, "
+    "stocks oversold — excellent LEAPS entry at depressed prices. "
+    "Zone 18–21 excluded: moderate stress where IV is neither cheap nor justified.", LIGHT_PURPLE, PURPLE))
 
 story.append(PageBreak())
 
@@ -423,25 +424,43 @@ story.append(PageBreak())
 story.append(section_header("7.  Phase 5 — CSP Screening & Scoring", DARK_BLUE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 1 — Technical Pre-Score (max 4 points)", H2))
+story.append(Paragraph("Step 1 — RSI Hard Gate (NEW)", H2))
+story.append(info_box(
+    "<b>If RSI ≥ 65 → SKIP immediately.</b>  Overbought stocks have high mean-reversion risk "
+    "within the 30–45 DTE window.  No options lookup is performed.", LIGHT_RED, RED))
+story.append(spacer(0.1))
+
+story.append(Paragraph("Step 2 — BB-Based Delta Range (NEW — replaces VIX-global range)", H2))
+bb_delta_rows = [
+    ["BB Position",                         "Delta Range",   "Rationale"],
+    ["Price ≤ Lower BB + 3%",               "0.25 – 0.35\n(Aggressive)",   "Stock oversold → high reversal probability → sell closer to ATM"],
+    ["Between Lower BB and Mid BB",         "0.15 – 0.25\n(Moderate)",     "Partial pullback → standard entry quality"],
+    ["Price ≥ Mid BB (SMA 20)",             "0.08 – 0.15\n(Conservative)", "At/above average → more downside room → stay far OTM"],
+]
+story.append(data_table(bb_delta_rows[0], bb_delta_rows[1:],
+             [2.2*inch, 1.4*inch, 2.9*inch], GREEN))
+story.append(spacer(0.1))
+
+story.append(Paragraph("Step 3 — Technical Scoring (max 5 points)", H2))
 score_rows = [
     ["Signal",                      "Points", "Condition"],
     ["Above 50-day SMA",            "+1",     "Stock price > SMA 50 (medium-term uptrend)"],
-    ["At/below 20-day SMA",         "+1",     "Stock price ≤ SMA 20 (short-term pullback = Wheel entry)"],
+    ["At/below 20-day SMA",         "+1",     "Stock price ≤ SMA 20 / BB midline (short-term pullback)"],
     ["Healthy pullback today",      "+1",     "Day change between −0.5% and −5.0%"],
-    ["Price under $100",            "+1",     "Affordable collateral for retail position sizing"],
+    ["RSI < 50",                    "+1",     "Actively oversold — best entry timing (replaces price<$100)"],
+    ["IV ≥ 40%",                    "+1",     "Elevated implied volatility — premium is rich"],
 ]
 story.append(data_table(score_rows[0], score_rows[1:],
              [2.5*inch, 0.7*inch, 3.3*inch], GREEN))
 story.append(spacer(0.08))
 story.append(Paragraph(
-    "Early exit: if pre-score < 2 (MIN_SCORE_TO_TRADE − 1), skip options lookup entirely "
-    "to save API calls.", NOTE))
+    "Require final score ≥ MIN_SCORE_TO_TRADE (3) to qualify.  "
+    "Score = 5 → flagged HIGH CONVICTION.", NOTE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 2 — Find Best Put Contract (Tradier Options Chain)", H2))
+story.append(Paragraph("Step 4 — Find Best Put Contract (Tradier Options Chain)", H2))
 story.append(Paragraph(
-    "For each expiration date between MIN_DTE (20) and MAX_DTE (45) days:", BODY))
+    "For each expiration date between MIN_DTE (30) and MAX_DTE (45) days:", BODY))
 story.append(bullet("Fetch full options chain from Tradier with <b>greeks=true</b>"))
 story.append(bullet("Filter puts: Open Interest ≥ 100,  valid bid/ask quote"))
 story.append(bullet("Get delta from <b>Tradier greeks.delta</b>; fallback to Black-Scholes if null"))
@@ -456,16 +475,6 @@ story.append(info_box(
     "<b>If all contracts exceed ARR cap:</b>  Pick the contract with the lowest delta (safest).",
     LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
-
-story.append(Paragraph("Step 3 — IV Score (+1 point)", H2))
-story.append(bullet("If contract <b>IV ≥ 40%</b>  →  add +1 to score"))
-story.append(spacer(0.08))
-
-story.append(Paragraph("Step 4 — Final Score Gate", H2))
-story.append(bullet("<b>Final score = pre-score + IV bonus</b>  (max 5 points)"))
-story.append(bullet("Require final score ≥ <b>MIN_SCORE_TO_TRADE (3)</b> to qualify"))
-story.append(bullet("Positions with score = 5 are flagged as <b>HIGH CONVICTION</b>"))
-story.append(spacer(0.08))
 
 story.append(Paragraph("Step 5 — Rank and Select Top 5", H2))
 story.append(bullet("Sort qualifying CSPs by the following priority:"))
@@ -486,8 +495,9 @@ story.append(PageBreak())
 story.append(section_header("8.  Phase 6 — LEAPS Screening", DARK_BLUE))
 story.append(spacer(0.1))
 story.append(info_box(
-    "<b>VIX Hard Gate:</b>  LEAPS screening runs ONLY when <b>15 &lt; VIX &lt; 18</b>. "
-    "Outside this range the entire LEAPS phase is skipped.", LIGHT_ORANGE, ORANGE))
+    "<b>VIX Hard Gate:</b>  LEAPS screening runs ONLY when <b>VIX ≤ 18  OR  VIX ≥ 21</b>. "
+    "Zone 18–21 is excluded (moderate stress — IV inflated without directional clarity). "
+    "Outside both zones the entire LEAPS phase is skipped.", LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
 story.append(Paragraph(
     "Runs on the same stock universe that passed the hard filters in Phase 4.", BODY))
@@ -513,8 +523,8 @@ story.append(bullet("OI filter: skip only if confirmed OI &gt; 0 but &lt; 50 (OI
 story.append(bullet("Price: (bid+ask)/2 → ask → bid → lastPrice (in priority order)"))
 story.append(bullet("Delta: use <b>Tradier greeks.delta</b> if available, otherwise compute via <b>Black-Scholes</b>"))
 story.append(bullet("For BS computation: use Tradier IV if IV ≥ 0.20, else default to <b>0.45</b> (LEAPS greeks are unreliable in data feeds)"))
-story.append(bullet("Delta filter: <b>0.80 ≤ delta ≤ 0.99</b> (deep in the money)"))
-story.append(bullet("Selection: pick the contract whose delta is <b>closest to 0.85 (target)</b>"))
+story.append(bullet("Delta filter: <b>0.70 ≤ delta ≤ 0.85</b> (deep in the money, lowered from 0.80–0.99)"))
+story.append(bullet("Selection: pick the contract whose delta is <b>closest to 0.77 (target)</b>"))
 story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Ranking", H2))
@@ -625,7 +635,7 @@ leaps_param_rows = [
     ["LEAPS_VIX_HIGH",          "18",        "Upper VIX bound for LEAPS gate"],
     ["LEAPS_MIN_SCORE",         "2",         "Minimum LEAPS criteria score (out of 3)"],
     ["LEAPS_MIN_OI",            "50",        "Minimum OI (only enforced when OI > 0 from API)"],
-    ["LEAPS_MAX_PORTFOLIO_PCT", "10%",       "Hard cap on total LEAPS exposure as % of portfolio"],
+    ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
     ["LEAPS_RSI_OVERBOUGHT",    "70",        "RSI threshold — below this = not overbought (+1 pt)"],
     ["LEAPS_RSI_PERIOD",        "14",        "RSI calculation period (Wilder's smoothed)"],
     ["LEAPS_HIGH_BETA",         "2.2",       "Beta above which stricter BB criterion applies"],
@@ -674,7 +684,7 @@ story.append(spacer(0.1))
 
 flow = [
     ("START  6:35 AM PT trigger", DARK_BLUE),
-    ("Fetch VIX → determine deploy %, CSP delta range, LEAPS gate (15 < VIX < 18)", MID_BLUE),
+    ("Fetch VIX → determine deploy %; LEAPS gate: VIX ≤ 18 OR ≥ 21", MID_BLUE),
     ("Fetch Tradier account: portfolio value, cash, option buying power", MID_BLUE),
     ("Fetch all open positions", MID_BLUE),
     ("─── POSITION MANAGEMENT ───", GREY_DARK),
@@ -683,7 +693,7 @@ flow = [
     ("    • If (entry − current) / entry ≥ 50%  →  BUY TO CLOSE at mid", GREEN),
     ("For each open LONG CALL with DTE > 200 (LEAPS):", GREEN),
     ("    • Fetch live Tradier mid-price", GREEN),
-    ("    • If (current − entry) / entry ≥ 10%  →  SELL TO CLOSE at mid", GREEN),
+    ("    • If (current − entry) / entry ≥ 5%   →  SELL TO CLOSE at mid", GREEN),
     ("Re-fetch account to capture released capital", MID_BLUE),
     ("─── STOCK SCREENING ───", GREY_DARK),
     ("Load approved ticker list from Google Sheets", GREY_DARK),
@@ -701,17 +711,17 @@ flow = [
     ("    • Filter puts: OI≥100, delta in BB-tier range, ARR 40–70%", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
-    ("─── LEAPS SCORING (only if 15 < VIX < 18) ───", PURPLE),
+    ("─── LEAPS SCORING (only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
     ("For each stock passing hard filters:", PURPLE),
     ("    • Criterion 1: earnings > 15 days away (+1)", PURPLE),
     ("    • Criterion 2: near lower Bollinger Band or beta-adjusted midline (+1)", PURPLE),
     ("    • Criterion 3: RSI(14) < 70 (+1)", PURPLE),
     ("    • If score < 2: skip", PURPLE),
     ("    • Fetch call chain from Tradier (DTE 365–730, greeks=true)", PURPLE),
-    ("    • Filter calls: delta 0.80–0.99; pick closest to delta 0.85", PURPLE),
+    ("    • Filter calls: delta 0.70–0.85; pick closest to delta 0.77", PURPLE),
     ("Sort LEAPS by score DESC, RSI ASC  →  take top 5", PURPLE),
     ("─── EXECUTION ───", DARK_BLUE),
-    ("LEAPS: iterate top-ranked first, 1 contract each, until 10% budget exhausted", PURPLE),
+    ("LEAPS: iterate top-ranked first, 1 contract each, until 15% budget exhausted", PURPLE),
     ("CSP:   iterate top-scored first, 1 contract each, until VIX-deploy cash exhausted", GREEN),
     ("All orders: limit at live Tradier mid-price, time-in-force = day", DARK_BLUE),
     ("─── DISCORD ───", MID_BLUE),
