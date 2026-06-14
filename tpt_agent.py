@@ -91,8 +91,8 @@ CSP_DELTA_MID_ZONE_MAX   = float(os.getenv("CSP_DELTA_MID_ZONE_MAX",   "0.25"))
 CSP_DELTA_ABOVE_MID_MIN  = float(os.getenv("CSP_DELTA_ABOVE_MID_MIN",  "0.08"))
 CSP_DELTA_ABOVE_MID_MAX  = float(os.getenv("CSP_DELTA_ABOVE_MID_MAX",  "0.15"))
 
-# — CSP RSI hard gate (new): overbought stocks disqualified for CSP —
-CSP_RSI_OVERBOUGHT = float(os.getenv("CSP_RSI_OVERBOUGHT", "65"))
+# — RSI hard gate (shared): overbought stocks disqualified for BOTH CSP and LEAPS —
+RSI_OVERBOUGHT_MAX = float(os.getenv("RSI_OVERBOUGHT_MAX", "65"))
 
 # — CSP ARR target (cap raised to 70%) —
 MIN_ARR           = float(os.getenv("MIN_ARR",  "40"))
@@ -127,11 +127,12 @@ LEAPS_MAX_DTE           = 730
 LEAPS_MIN_DELTA         = float(os.getenv("LEAPS_MIN_DELTA",    "0.70"))  # #6: widened from 0.80
 LEAPS_MAX_DELTA         = float(os.getenv("LEAPS_MAX_DELTA",    "0.85"))  # #6: lowered from 0.99
 LEAPS_TARGET_DELTA      = float(os.getenv("LEAPS_TARGET_DELTA", "0.77"))  # #6: lowered from 0.85
-LEAPS_RSI_OVERBOUGHT    = 70.0
 LEAPS_RSI_PERIOD        = 14
-LEAPS_MIN_SCORE         = 2
 LEAPS_MAX_PORTFOLIO_PCT = 0.15                                             # #10: raised from 0.10 (15%)
 LEAPS_MIN_OI            = int(os.getenv("LEAPS_MIN_OI", "50"))
+# LEAPS dip-buy hard filter: price must be within this % of the lower Bollinger
+# Band (mean-reversion entry — buy quality names that have pulled back).
+LEAPS_BB_LOWER_PCT      = float(os.getenv("LEAPS_BB_LOWER_PCT", "5.0"))
 # VIX gate: LEAPS enabled when VIX ≤ 18 (calm) OR VIX ≥ 21 (fear/opportunity)
 # Zone 18–21 excluded — moderate stress where IV is neither cheap nor justified
 LEAPS_VIX_CALM_MAX      = float(os.getenv("LEAPS_VIX_CALM_MAX", "18"))   # VIX gate: calm ceiling
@@ -671,6 +672,10 @@ def screen_all_stocks(tickers: list[str]) -> list[dict]:
         if has_earnings_in_window(ticker, EARNINGS_FILTER_DAYS):
             log(f"  ✗ {ticker}: earnings within {EARNINGS_FILTER_DAYS}d")
             return None
+        # Hard filter 3: RSI overbought (applies to both CSP and LEAPS)
+        if tech.get("rsi", 50.0) >= RSI_OVERBOUGHT_MAX:
+            log(f"  ✗ {ticker}: RSI={tech.get('rsi', 0):.1f} ≥ {RSI_OVERBOUGHT_MAX} — overbought")
+            return None
         return {
             "ticker":  ticker,
             "price":   tech["price"],
@@ -811,15 +816,11 @@ def score_csp(stock: dict, contract: dict) -> tuple[int, list[str]]:
 def screen_ticker_csp(stock: dict) -> dict | None:
     """
     CSP screening using pre-computed stock data from screen_all_stocks().
-    Applies CSP-specific hard filter (RSI ≥ 65) and BB-based delta range.
+    RSI overbought is now a shared hard filter (applied in screen_all_stocks);
+    here we apply the pre-score gate and BB-based delta range.
     """
     ticker = stock["ticker"]
     rsi    = stock.get("rsi", 50.0)
-
-    # CSP-specific hard filter: RSI overbought
-    if rsi >= CSP_RSI_OVERBOUGHT:
-        log(f"  ✗ {ticker}: RSI={rsi:.1f} ≥ {CSP_RSI_OVERBOUGHT} — overbought, skip CSP")
-        return None
 
     # Pre-score gate: skip the chain fetch for stocks that mathematically
     # cannot reach MIN_SCORE_TO_TRADE even with both contract-level points.
@@ -965,40 +966,52 @@ def find_best_leaps(stock: dict) -> dict | None:
     return None
 
 
-def score_leaps(stock: dict, rsi: float) -> tuple[int, list[str]]:
-    score, reasons = 0, []
-    if stock["price"] > stock["sma200"]:
-        score += 1; reasons.append("Above 200d SMA ✅")
-    if stock["price"] > stock["sma50"]:
-        score += 1; reasons.append("Above 50d SMA ✅")
-    if rsi < LEAPS_RSI_OVERBOUGHT:
-        score += 1; reasons.append(f"RSI({LEAPS_RSI_PERIOD}) = {rsi:.1f} — not overbought ✅")
-    return score, reasons
+def bb_distance_pct(stock: dict) -> float:
+    """% the price sits above the lower Bollinger Band. Lower = more oversold."""
+    bb_lo = stock.get("bb_lo", 0)
+    if bb_lo <= 0:
+        return 999.0
+    return (stock["price"] - bb_lo) / bb_lo * 100
+
+
+def pct_above_200sma(stock: dict) -> float:
+    """% the price sits above the 200d SMA (long-term trend strength)."""
+    sma200 = stock.get("sma200", 0)
+    if sma200 <= 0:
+        return 0.0
+    return (stock["price"] - sma200) / sma200 * 100
 
 
 def screen_ticker_leaps(stock: dict) -> dict | None:
     """
-    LEAPS screening using pre-computed stock data from screen_all_stocks().
-    Score FIRST (all 3 criteria are stock-level) and gate before fetching
-    any option chain — so we only pay the chain cost for stocks that qualify.
+    LEAPS screening (dip-buy thesis). Stock-level hard filters are checked
+    BEFORE any option chain is fetched:
+      • price > SMA200          (shared filter — knife guard, already applied)
+      • RSI < 65                (shared filter — already applied)
+      • no earnings ≤ 10d       (shared filter — already applied)
+      • price within LEAPS_BB_LOWER_PCT of the lower Bollinger Band  ← NEW
+    No scoring — survivors are all valid; prioritization happens via sort
+    (closest to lower BB first, then strongest 200-SMA trend) in run().
     """
-    ticker = stock["ticker"]
-    rsi    = stock.get("rsi", 50.0)
+    ticker  = stock["ticker"]
+    bb_dist = bb_distance_pct(stock)
 
-    # Score gate first — no option calls needed (all criteria are stock-level)
-    leaps_score, leaps_reasons = score_leaps(stock, rsi)
-    if leaps_score < LEAPS_MIN_SCORE:
-        log(f"  ✗ {ticker}: LEAPS score {leaps_score} < {LEAPS_MIN_SCORE} — skip chain fetch")
+    # LEAPS-specific hard filter: price must be near the lower BB (pulled back)
+    if bb_dist > LEAPS_BB_LOWER_PCT:
+        log(f"  ✗ {ticker}: {bb_dist:.1f}% above lower BB (> {LEAPS_BB_LOWER_PCT}%) — not a dip")
         return None
 
-    log(f"  LEAPS {ticker}: RSI={rsi:.1f}  score={leaps_score}/3 — fetching chain")
+    log(f"  LEAPS {ticker}: {bb_dist:.1f}% above lower BB — fetching chain")
     contract = find_best_leaps(stock)
     if not contract:
         return None
 
-    log(f"    {ticker} LEAPS ✅  score={leaps_score}/3  Δ={contract['delta']:.3f}  cost=${contract['cost_per_contract']:.0f}")
-    return {**contract, "leaps_score": leaps_score, "leaps_reasons": leaps_reasons,
-            "rsi": rsi}
+    log(f"    {ticker} LEAPS ✅  {bb_dist:.1f}% above lower BB  "
+        f"Δ={contract['delta']:.3f}  cost=${contract['cost_per_contract']:.0f}")
+    return {**contract,
+            "bb_distance_pct": round(bb_dist, 2),
+            "pct_above_200sma": round(pct_above_200sma(stock), 2),
+            "rsi": stock.get("rsi", 50.0)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1311,56 +1324,6 @@ def _fmt_position(occ_symbol: str) -> str:
     return f"{ticker} {k_str}{pc} {exp_str}"
 
 
-def build_csp_embed(trade: dict, rank: int) -> dict:
-    arrow     = "🔻" if trade["day_chg"] < 0 else "🔼"
-    arr_stars = "🔥🔥🔥" if trade["arr"] >= 60 else ("🔥🔥" if trade["arr"] >= 50 else "🔥")
-    score_str = "⭐" * trade["score"] + "☆" * (5 - trade["score"])
-    conviction = "  🏆 HIGH CONVICTION" if trade["score"] >= SIZE_UP_SCORE else ""
-    return {
-        "title":  f"#{rank}  {trade['ticker']}  —  CSP Trade Idea [TPT]{conviction}",
-        "color":  0x27AE60,
-        "fields": [
-            {"name": "📌 Action",       "value": f"**SELL TO OPEN** `{trade['expiration']} ${trade['strike']:.0f} Put`", "inline": False},
-            {"name": "​", "value": "​", "inline": False},
-            {"name": "💵 Stock Price",  "value": f"**${trade['stock_price']:.2f}** {arrow} {abs(trade['day_chg']):.2f}% today", "inline": True},
-            {"name": "🎯 Strike / OTM", "value": f"**${trade['strike']:.0f}**  ({abs(trade['otm_pct']):.1f}% OTM)", "inline": True},
-            {"name": "📅 DTE",          "value": f"**{trade['dte']} days**  (exp {trade['expiration']})", "inline": True},
-            {"name": "💰 Bid / Ask",    "value": f"${trade['bid']:.2f} / ${trade['ask']:.2f}", "inline": True},
-            {"name": "💲 Mid Premium",  "value": f"**${trade['mid']:.2f}**  (${trade['premium_total']:.0f}/contract)", "inline": True},
-            {"name": "🛡️ Breakeven",   "value": f"**${trade['breakeven']:.2f}**", "inline": True},
-            {"name": "⚠️ Max Risk",     "value": f"${trade['max_risk']:,.0f} / contract", "inline": True},
-            {"name": "📐 Delta (abs)",  "value": f"**{trade['delta']:.3f}**", "inline": True},
-            {"name": "📊 IV",           "value": f"**{trade['iv']:.1f}%**", "inline": True},
-            {"name": f"📈 ARR {arr_stars}", "value": f"**{trade['arr']:.1f}%**", "inline": True},
-            {"name": f"⭐ Score  {score_str}", "value": "  •  ".join(trade.get("score_reasons", [])) or "—", "inline": False},
-        ],
-        "footer": {"text": "TPT Agent — Tradier Paper Trading  |  Wheel / CSP Strategy"},
-    }
-
-
-def build_leaps_embed(trade: dict, rank: int) -> dict:
-    score_str = "⭐" * trade.get("leaps_score", 0) + "☆" * (3 - trade.get("leaps_score", 0))
-    arrow     = "🔻" if trade["day_chg"] < 0 else "🔼"
-    return {
-        "title":  f"#{rank}  {trade['ticker']}  —  LEAPS Trade Idea [TPT]",
-        "color":  0x8E44AD,
-        "fields": [
-            {"name": "📌 Action",       "value": f"**BUY TO OPEN** `{trade['expiration']} ${trade['strike']:.0f} Call`", "inline": False},
-            {"name": "​", "value": "​", "inline": False},
-            {"name": "💵 Stock Price",  "value": f"**${trade['stock_price']:.2f}** {arrow} {abs(trade['day_chg']):.2f}% today", "inline": True},
-            {"name": "🎯 Strike / ITM", "value": f"**${trade['strike']:.0f}**  ({abs(trade['otm_pct']):.1f}% ITM)", "inline": True},
-            {"name": "📅 DTE",          "value": f"**{trade['dte']} days**  (exp {trade['expiration']})", "inline": True},
-            {"name": "💰 Bid / Ask",    "value": f"${trade['bid']:.2f} / ${trade['ask']:.2f}", "inline": True},
-            {"name": "💲 Cost",         "value": f"**${trade['mid']:.2f}**/share  (${trade['cost_per_contract']:,.0f}/contract)", "inline": True},
-            {"name": "📐 Delta",        "value": f"**{trade['delta']:.2f}**", "inline": True},
-            {"name": "📊 IV",           "value": f"**{trade['iv']:.1f}%**", "inline": True},
-            {"name": "🏁 Breakeven",    "value": f"**${trade['breakeven']:.2f}**  ({trade['pct_to_breakeven']:.1f}% above current)", "inline": True},
-            {"name": f"⭐ Score  {score_str}", "value": "  •  ".join(trade.get("leaps_reasons", [])) or "—", "inline": False},
-        ],
-        "footer": {"text": "TPT Agent — Tradier Paper Trading  |  LEAPS Deep ITM Call Strategy"},
-    }
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SUMMARY POSTING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1464,9 +1427,11 @@ def post_leaps_ideas(leaps_trades: list[dict], vix: float, vix_ok: bool):
     discord_post({"embeds": [{
         "title":       "🎯  LEAPS Screening Criteria [TPT]",
         "description": "\n".join([
-            f"**DTE Range:** {LEAPS_MIN_DTE}–{LEAPS_MAX_DTE} days",
+            "**Hard filters:** price > 200d SMA · RSI < 65 · no earnings ≤ 10d",
+            f"**Dip entry:** price within {LEAPS_BB_LOWER_PCT:.0f}% of lower Bollinger Band",
+            f"**DTE Range:** {LEAPS_MIN_DTE}–{LEAPS_MAX_DTE} days (farthest expiry)",
             f"**Target Δ:** {LEAPS_TARGET_DELTA:.2f}  (range {LEAPS_MIN_DELTA:.2f}–{LEAPS_MAX_DELTA:.2f})",
-            f"**Min Score:** {LEAPS_MIN_SCORE}/3",
+            "**Priority:** closest to lower BB, then strongest 200-SMA trend",
             f"**{vix_str}**",
         ]),
         "color": 0x8E44AD,
@@ -1597,13 +1562,18 @@ def run():
     log(f"  {len(csp_candidates)} qualified → top {len(top_csps)} selected: "
         f"{[t['ticker'] for t in top_csps]}")
 
-    # ── Phase 6: LEAPS scoring + contract selection ───────────────────────────
+    # ── Phase 6: LEAPS screening + contract selection ─────────────────────────
     log("Phase 6: LEAPS screening")
     leaps_candidates = []
     if vix_ok_leaps:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             leaps_candidates = [r for r in ex.map(screen_ticker_leaps, stock_universe) if r]
-        leaps_candidates.sort(key=lambda x: (-x.get("leaps_score", 0), x.get("rsi", 99)))
+        # Prioritize: closest to lower BB first (most oversold / best dip entry),
+        # then strongest long-term trend (furthest above 200 SMA) as tiebreaker.
+        leaps_candidates.sort(key=lambda x: (
+            x.get("bb_distance_pct", 999),
+            -x.get("pct_above_200sma", 0),
+        ))
         top_leaps = leaps_candidates[:TOP_N_LEAPS]
         log(f"  {len(leaps_candidates)} qualified → top {len(top_leaps)} selected: "
             f"{[t['ticker'] for t in top_leaps]}")
