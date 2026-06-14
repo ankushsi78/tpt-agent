@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ankushsinghal.tptagent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/ankushsinghal/Documents/Trading/tpt_agent.py</string>
+    </array>
+
+    <!-- Run every day at 6:35 AM local time (PT) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>6</integer>
+        <key>Minute</key><integer>35</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ankushsinghal/Documents/Trading</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ankushsinghal/Documents/Trading/tpt_agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ankushsinghal/Documents/Trading/tpt_agent.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/ankushsinghal</string>
+
+        <!-- Tradier Paper Trading -->
+        <key>TRADIER_TOKEN</key>
+        <string>__TRADIER_TOKEN__</string>
+        <key>TRADIER_ACCOUNT_ID</key>
+        <string>__TRADIER_ACCOUNT_ID__</string>
+        <key>TRADIER_BASE_URL</key>
+        <string>https://sandbox.tradier.com/v1</string>
+
+        <!-- Discord (same channels as experiment_bot) -->
+        <key>DISCORD_WEBHOOK_URL</key>
+        <string>__DISCORD_WEBHOOK_URL__</string>
+        <key>DISCORD_FREE_WEBHOOK_URL</key>
+        <string>__DISCORD_WEBHOOK_URL__</string>
+
+        <!-- Approved stocks list -->
+        <key>APPROVED_STOCKS_URL</key>
+        <string>https://docs.google.com/spreadsheets/d/1JLe89TXB7nWWR7Nho6wMS3RvFAiEV3hr/export?format=csv&amp;gid=822998282</string>
+
+        <!-- Strategy parameters — kept in sync with tpt_agent.py defaults.
+             NOTE: CSP delta is now BB-position-based per stock (no VIX delta
+             vars); price<$100 scoring replaced by RSI<50; LEAPS VIX gate,
+             RSI gate, stop-loss, etc. use code defaults and are not overridden
+             here to avoid drift. -->
+        <key>MIN_DTE</key>
+        <string>30</string>
+        <key>MAX_DTE</key>
+        <string>45</string>
+        <key>EARNINGS_FILTER_DAYS</key>
+        <string>10</string>
+        <key>MIN_ARR</key>
+        <string>40</string>
+        <key>MAX_ARR</key>
+        <string>70</string>
+        <key>MIN_OPEN_INTEREST</key>
+        <string>50</string>
+        <key>FILTER_BELOW_200_SMA</key>
+        <string>true</string>
+        <key>FILTER_EARNINGS_IN_DTE_WINDOW</key>
+        <string>true</string>
+        <key>SCORE_ABOVE_50_SMA</key>
+        <string>true</string>
+        <key>SCORE_BELOW_MID_BB</key>
+        <string>true</string>
+        <key>SCORE_DOWN_TODAY</key>
+        <string>true</string>
+        <key>SCORE_DOWN_TODAY_MIN_PCT</key>
+        <string>0.5</string>
+        <key>SCORE_DOWN_TODAY_MAX_PCT</key>
+        <string>5.0</string>
+        <key>SCORE_IV_MIN_PCT</key>
+        <string>40</string>
+        <key>MIN_SCORE_TO_TRADE</key>
+        <string>3</string>
+        <key>SIZE_UP_SCORE</key>
+        <string>5</string>
+        <key>LEAPS_MIN_DELTA</key>
+        <string>0.70</string>
+        <key>LEAPS_MAX_DELTA</key>
+        <string>0.85</string>
+        <key>LEAPS_TARGET_DELTA</key>
+        <string>0.77</string>
+        <key>LEAPS_MIN_OI</key>
+        <string>50</string>
+    </dict>
+</dict>
+</plist>

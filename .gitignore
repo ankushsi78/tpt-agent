@@ -47,3 +47,6 @@ Thumbs.db
 .cache/
 data/
 *.csv
+
+# launchd plist with live secrets — only the .template is committed
+com.ankushsinghal.tptagent.plist
