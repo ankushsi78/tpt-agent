@@ -283,7 +283,7 @@ phases = [
     (MID_BLUE,   "3", "Refresh Capital After Closes",       "Re-fetch account after any closes to get updated cash and buying power."),
     (GREY_DARK,  "4", "Load Tickers + Hard Filters",        "Pull approved stock list, fetch price history, apply 200 SMA and earnings hard filters."),
     (GREEN,      "5", "CSP Screening + Scoring",            "Score each stock on 5 technical signals, find best put contract, rank by score then ARR/Delta ratio."),
-    (PURPLE,     "6", "LEAPS Screening",                    "If VIX ≤ 18 or ≥ 21: score stocks on 3 LEAPS criteria, find best deep ITM call contract."),
+    (PURPLE,     "6", "LEAPS Screening",                    "If VIX ≤ 18 or ≥ 21: keep names near the lower BB (dip), sort by proximity, find deep ITM call."),
     (PURPLE,     "7", "Execute LEAPS Trades",               "Top-ranked first, 1 contract per pick, until 15% portfolio budget exhausted."),
     (GREEN,      "8", "Execute CSP Trades",                 "Top-scored first, 1 contract per pick, until VIX-adjusted cash budget exhausted."),
     (MID_BLUE,   "9", "Post Discord Summary",               "Post run summary, open positions table, CSP summary table, LEAPS summary table."),
@@ -449,7 +449,7 @@ hf_rows = [
     ["Filter",                      "Logic",                        "Skip if"],
     ["200-day SMA",                 "Is stock in long-term uptrend?","Price ≤ SMA 200"],
     ["Earnings (CSP + LEAPS)",      "Earnings report imminent?",    "Earnings date falls within next EARNINGS_FILTER_DAYS (10) days"],
-    ["RSI overbought (CSP only)",   "Applied in Phase 5 per stock", "RSI ≥ 65 — stock is overbought, skip CSP screening"],
+    ["RSI overbought (CSP + LEAPS)","Is stock overbought?",         "RSI ≥ RSI_OVERBOUGHT_MAX (65)"],
 ]
 story.append(data_table(hf_rows[0], hf_rows[1:],
              [1.8*inch, 2.2*inch, 2.5*inch], RED))
@@ -466,10 +466,11 @@ story.append(PageBreak())
 story.append(section_header("7.  Phase 5 — CSP Screening & Scoring", DARK_BLUE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 1 — RSI Hard Gate", H2))
+story.append(Paragraph("Step 1 — RSI Hard Gate (shared filter)", H2))
 story.append(info_box(
-    "<b>If RSI ≥ 65 → SKIP immediately.</b>  Overbought stocks have high mean-reversion risk "
-    "within the 30–45 DTE window.  No options lookup is performed.", LIGHT_RED, RED))
+    "RSI ≥ RSI_OVERBOUGHT_MAX (65) is filtered out in Phase 4 for <b>both</b> CSP and LEAPS — "
+    "overbought stocks have high mean-reversion risk. By the time CSP scoring runs, every "
+    "candidate already has RSI &lt; 65.", LIGHT_RED, RED))
 story.append(spacer(0.1))
 
 story.append(Paragraph("Step 2 — Pre-Score Gate (skip chain fetch early)", H2))
@@ -554,22 +555,37 @@ story.append(info_box(
     "Outside both zones the entire LEAPS phase is skipped.", LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
 story.append(Paragraph(
-    "Runs on the same stock universe that passed the hard filters in Phase 4.", BODY))
+    "Runs on the stock universe that passed the Phase 4 hard filters "
+    "(price &gt; 200 SMA, RSI &lt; 65, no earnings ≤ 10d).", BODY))
 story.append(spacer(0.1))
 
-story.append(Paragraph("LEAPS Scoring Criteria (3 points total — all stock-level)", H2))
-leaps_score_rows = [
-    ["Criterion",          "Points", "Logic",            "Notes"],
-    ["Above 200-day SMA",  "+1",     "Price &gt; SMA 200", "Long-term uptrend confirmed"],
-    ["Above 50-day SMA",   "+1",     "Price &gt; SMA 50",  "Medium-term momentum intact"],
-    ["RSI not overbought", "+1",     "RSI(14) &lt; 70",    "Wilder's smoothed RSI from Tradier daily bars"],
+story.append(info_box(
+    "<b>Dip-buy thesis (mean-reversion):</b>  LEAPS target quality names that have "
+    "<b>pulled back</b> — not momentum names making new highs. There is NO scoring; "
+    "a single dip filter qualifies candidates and prioritization is by pure sort.",
+    LIGHT_PURPLE, PURPLE))
+story.append(spacer(0.1))
+
+story.append(Paragraph("LEAPS Hard Filters", H2))
+leaps_hf_rows = [
+    ["Filter",                  "Logic",                         "Rationale"],
+    ["Above 200-day SMA",       "Price &gt; SMA 200 (Phase 4)",  "Knife guard — long-term uptrend intact"],
+    ["RSI &lt; 65",             "RSI(14) &lt; 65 (Phase 4)",     "Not overbought"],
+    ["No earnings ≤ 10d",       "Phase 4 earnings filter",       "Avoid imminent earnings gap"],
+    ["Near lower BB",           "price ≤ lower BB × 1.05 (within LEAPS_BB_LOWER_PCT = 5%)", "The dip — buy quality on a pullback"],
 ]
-story.append(data_table(leaps_score_rows[0], leaps_score_rows[1:],
-             [1.5*inch, 0.7*inch, 1.5*inch, 2.8*inch], PURPLE))
+story.append(data_table(leaps_hf_rows[0], leaps_hf_rows[1:],
+             [1.6*inch, 2.6*inch, 2.3*inch], RED))
 story.append(spacer(0.08))
-story.append(bullet("Minimum score to qualify for LEAPS: <b>2 out of 3</b>"))
-story.append(bullet("All three criteria are <b>stock-level</b> — the score is computed BEFORE any "
-                    "option chain is fetched, so chains are only pulled for stocks that already qualify."))
+story.append(Paragraph(
+    "Note: 'above 50 SMA' was removed — it conflicts with the near-lower-BB dip thesis "
+    "(a stock at its lower band is rarely comfortably above its 50 SMA).", NOTE))
+story.append(spacer(0.1))
+
+story.append(Paragraph("LEAPS Prioritization (pure sort — no scoring)", H2))
+story.append(bullet("<b>1. Distance above lower BB, ASC</b> — closest to the band = most oversold = best dip entry"))
+story.append(bullet("<b>2. Distance above 200 SMA, DESC</b> — tiebreaker: strongest long-term trend on the deepest discount"))
+story.append(bullet("Take top 5"))
 story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Contract Selection (Tradier Options Chain)", H2))
@@ -584,11 +600,6 @@ story.append(bullet("Delta: use <b>Tradier greeks.delta</b> if available, otherw
 story.append(bullet("For BS computation: use Tradier IV if IV ≥ 0.20, else default to <b>0.45</b> (LEAPS greeks are unreliable in data feeds)"))
 story.append(bullet("Delta filter: <b>0.70 ≤ delta ≤ 0.85</b> (deep in the money)"))
 story.append(bullet("Selection: within the chosen expiry, pick the contract whose delta is <b>closest to 0.77 (target)</b>"))
-story.append(spacer(0.1))
-
-story.append(Paragraph("LEAPS Ranking", H2))
-story.append(bullet("Sort by: <b>leaps_score DESC</b>, then <b>RSI ASC</b> (most oversold first)"))
-story.append(bullet("Take top 5"))
 
 story.append(PageBreak())
 
@@ -665,7 +676,7 @@ csp_param_rows = [
     ["MIN_ARR",                   "40%",       "Minimum annualized return on risk to qualify"],
     ["MAX_ARR",                   "70%",       "ARR cap — step down to safer strike if exceeded"],
     ["MIN_OPEN_INTEREST",         "50",        "Minimum open interest for liquidity (rejects OI = 0 — CSP needs real liquidity)"],
-    ["CSP_RSI_OVERBOUGHT",        "65",        "Hard gate — skip stock if RSI ≥ this (overbought)"],
+    ["RSI_OVERBOUGHT_MAX",        "65",        "Shared hard filter — skip stock (CSP + LEAPS) if RSI ≥ this"],
     ["CSP_DELTA_NEAR_LOWER_MIN/MAX", "0.25/0.35", "Delta range when price ≤ lower BB + 3% (aggressive)"],
     ["CSP_DELTA_MID_ZONE_MIN/MAX",   "0.15/0.25", "Delta range when price between lower and mid BB (moderate)"],
     ["CSP_DELTA_ABOVE_MID_MIN/MAX",  "0.08/0.15", "Delta range when price ≥ mid BB (conservative)"],
@@ -693,10 +704,9 @@ leaps_param_rows = [
     ["LEAPS_TARGET_DELTA",      "0.77",      "Target delta — pick contract closest to this (lowered from 0.85)"],
     ["LEAPS_VIX_CALM_MAX",      "18",        "LEAPS enabled when VIX ≤ this (calm zone)"],
     ["LEAPS_VIX_FEAR_MIN",      "21",        "LEAPS also enabled when VIX ≥ this (fear/opportunity zone)"],
-    ["LEAPS_MIN_SCORE",         "2",         "Minimum LEAPS criteria score (out of 3)"],
+    ["LEAPS_BB_LOWER_PCT",      "5%",        "Dip filter — price must be within this % of the lower Bollinger Band"],
     ["LEAPS_MIN_OI",            "50",        "Minimum OI (only enforced when OI > 0 from API)"],
     ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
-    ["LEAPS_RSI_OVERBOUGHT",    "70",        "RSI threshold — below this = not overbought (+1 pt)"],
     ["LEAPS_RSI_PERIOD",        "14",        "RSI calculation period (Wilder's smoothed)"],
     ["LEAPS_CLOSE_PROFIT_PCT",  "5%",        "Close LEAPS when unrealized profit reaches this (lowered from 25%)"],
     ["LEAPS_STOP_LOSS_PCT",     "50%",       "Close LEAPS when unrealized loss reaches this"],
@@ -776,9 +786,9 @@ flow = [
     ("    • Fetch 310 days OHLCV + quote from Tradier  →  compute SMA20/50/200, BB, RSI", GREY_DARK),
     ("    • HARD FILTER 1: skip if price ≤ SMA 200", RED),
     ("    • HARD FILTER 2: skip if earnings within EARNINGS_FILTER_DAYS=10 (yfinance)", RED),
+    ("    • HARD FILTER 3: skip if RSI ≥ 65 (overbought — both CSP & LEAPS)", RED),
     ("─── CSP SCORING (parallel) ───", GREEN),
     ("For each stock passing hard filters:", GREEN),
-    ("    • Hard gate: RSI ≥ 65 → skip (overbought)", GREEN),
     ("    • Pre-score gate: skip chain fetch if stock-level pre-score can't reach 3", GREEN),
     ("    • BB-based delta range: near lower BB=0.25–0.35 / between BBs=0.15–0.25 / above mid=0.08–0.15", GREEN),
     ("    • Fetch put chain from Tradier (greeks=true)", GREEN),
@@ -786,13 +796,13 @@ flow = [
     ("    • Score: strike>50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
-    ("─── LEAPS SCORING (parallel; only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
+    ("─── LEAPS SCREENING (parallel; only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
     ("For each stock passing hard filters:", PURPLE),
-    ("    • Score FIRST (stock-level): above 200 SMA (+1), above 50 SMA (+1), RSI<70 (+1)", PURPLE),
-    ("    • If score < 2: skip (no chain fetch)", PURPLE),
+    ("    • DIP FILTER: skip unless price within 5% of lower BB (LEAPS_BB_LOWER_PCT)", RED),
+    ("    • No scoring — survivors are all valid dip candidates", PURPLE),
     ("    • Fetch ONLY the farthest expiry chain (DTE 365–730); fall back if no contract", PURPLE),
     ("    • Filter calls: OI≥50, delta 0.70–0.85; pick closest to delta 0.77", PURPLE),
-    ("Sort LEAPS by score DESC, RSI ASC  →  take top 5", PURPLE),
+    ("Sort LEAPS: dist-above-lower-BB ASC → dist-above-200-SMA DESC  →  take top 5", PURPLE),
     ("─── EXECUTION ───", DARK_BLUE),
     ("LEAPS: iterate top-ranked first, 1 contract each, until 15% budget exhausted", PURPLE),
     ("CSP:   iterate top-scored first, 1 contract each, until VIX-deploy cash exhausted", GREEN),
