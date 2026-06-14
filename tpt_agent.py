@@ -997,14 +997,18 @@ def place_order(option_symbol: str, underlying: str, side: str,
 
 def manage_existing_positions(positions: list[dict]) -> list[dict]:
     """
-    CSP close rules (in priority order):
-      #2  Stop-loss:    current_price >= avg_entry × (1 + CSP_STOP_LOSS_MULT)  → close
-      #1  50% capture:  premium_captured >= CSP_CLOSE_PREMIUM_PCT              → close
-      #1  21-DTE exit:  DTE <= CSP_DTE_EXIT AND premium_captured >= -0.50      → close
+    Profit exits → place order automatically.
+    Loss exits   → post Discord alert only (trader decides manually).
 
-    LEAPS close rules:
-      #3  Profit target: profit_pct >= LEAPS_CLOSE_PROFIT_PCT  (+25%)          → close
-      #3  Stop-loss:     loss_pct   >= LEAPS_STOP_LOSS_PCT     (−50%)          → close
+    CSP rules (in priority order):
+      Stop-loss    current_price >= avg_entry × 3.0   → ALERT (loss)
+      50% capture  premium_captured >= 50%             → ORDER (profit)
+      21-DTE exit  DTE ≤ 21 AND captured ≥ 0%         → ORDER (profit)
+      21-DTE exit  DTE ≤ 21 AND -50% ≤ captured < 0%  → ALERT (small loss)
+
+    LEAPS rules:
+      Profit +5%   profit_pct >= 5%                   → ORDER (profit)
+      Stop-loss    profit_pct <= -50%                  → ALERT (loss)
     """
     actions = []
     for pos in positions:
@@ -1025,56 +1029,85 @@ def manage_existing_positions(positions: list[dict]) -> list[dict]:
             # ── Short put (CSP) ───────────────────────────────────────────────
             premium_captured = (avg_entry - cur_price) / avg_entry if avg_entry > 0 else 0
             loss_mult        = (cur_price - avg_entry) / avg_entry if avg_entry > 0 else 0
+            pnl              = round((avg_entry - cur_price) * abs(qty) * 100, 2)
             log(f"  {sym} CSP: entry=${avg_entry:.2f}  cur=${cur_price:.2f}  "
                 f"captured={premium_captured*100:.1f}%  DTE={dte}")
 
             close_reason = None
+            is_loss      = False
 
-            # Rule #2 — Stop-loss: option now costs ≥ 3× what we received (loss = 2× premium)
+            # Rule — Stop-loss: option costs ≥ 3× what we received (loss = 2× premium)
             if loss_mult >= CSP_STOP_LOSS_MULT:
-                close_reason = f"STOP-LOSS (loss={loss_mult*100:.0f}% of premium, {CSP_STOP_LOSS_MULT*100:.0f}% threshold)"
+                close_reason = f"STOP-LOSS (loss={loss_mult*100:.0f}% of premium)"
+                is_loss      = True
 
-            # Rule #1a — 50% premium captured
+            # Rule — 50% premium captured (always a profit)
             elif premium_captured >= CSP_CLOSE_PREMIUM_PCT:
                 close_reason = f"50% premium captured ({premium_captured*100:.0f}%)"
 
-            # Rule #1b — 21-DTE time exit: close if any profit OR small loss (≤ 50% of premium)
+            # Rule — 21-DTE exit (profit if captured ≥ 0, small loss if < 0)
             elif dte <= CSP_DTE_EXIT and premium_captured >= -CSP_CLOSE_PREMIUM_PCT:
-                close_reason = (f"21-DTE time exit (DTE={dte}, "
-                                f"captured={premium_captured*100:.0f}%)")
+                close_reason = f"21-DTE time exit (DTE={dte}, captured={premium_captured*100:.0f}%)"
+                is_loss      = (premium_captured < 0)
 
             if close_reason:
-                log(f"    → Closing: {close_reason}")
-                ok, resp = place_order(sym, ticker, "buy_to_close", int(abs(qty)), cur_price)
-                actions.append({
-                    "symbol": sym, "action": "close_csp", "reason": close_reason,
-                    "pnl": round((avg_entry - cur_price) * abs(qty) * 100, 2),
-                    "ok": ok,
-                })
+                if is_loss:
+                    # Loss exit → alert only, no order
+                    log(f"    → ⚠️  Loss alert (no order): {close_reason}")
+                    post_loss_alert(sym, "CSP", "buy_to_close", int(abs(qty)),
+                                    avg_entry, cur_price, pnl,
+                                    premium_captured * 100, close_reason)
+                    actions.append({
+                        "symbol": sym, "action": "alert_csp", "reason": close_reason,
+                        "pnl": pnl, "ok": None, "alerted": True,
+                    })
+                else:
+                    # Profit exit → place order
+                    log(f"    → Closing (profit): {close_reason}")
+                    ok, resp = place_order(sym, ticker, "buy_to_close", int(abs(qty)), cur_price)
+                    actions.append({
+                        "symbol": sym, "action": "close_csp", "reason": close_reason,
+                        "pnl": pnl, "ok": ok,
+                    })
             else:
                 log(f"    → Holding")
 
         elif qty > 0 and opt_type == "call":
             # ── Long call (LEAPS) ─────────────────────────────────────────────
             profit_pct = (cur_price - avg_entry) / avg_entry if avg_entry > 0 else 0
+            pnl        = round((cur_price - avg_entry) * qty * 100, 2)
             log(f"  {sym} LEAPS: entry=${avg_entry:.2f}  cur=${cur_price:.2f}  "
                 f"P&L={profit_pct*100:+.1f}%")
 
             close_reason = None
+            is_loss      = False
 
-            # Rule #3a — Profit target: +25%
+            # Rule — Profit target: +5%
             if profit_pct >= LEAPS_CLOSE_PROFIT_PCT:
                 close_reason = f"profit target (+{profit_pct*100:.0f}% ≥ +{LEAPS_CLOSE_PROFIT_PCT*100:.0f}%)"
 
-            # Rule #3b — Stop-loss: −50%
+            # Rule — Stop-loss: −50%
             elif profit_pct <= -LEAPS_STOP_LOSS_PCT:
                 close_reason = f"stop-loss ({profit_pct*100:.0f}% ≤ -{LEAPS_STOP_LOSS_PCT*100:.0f}%)"
+                is_loss      = True
 
             if close_reason:
-                log(f"    → Closing: {close_reason}")
-                ok, resp = place_order(sym, ticker, "sell_to_close", int(qty), cur_price)
-                actions.append({
-                    "symbol": sym, "action": "close_leaps", "reason": close_reason,
+                if is_loss:
+                    # Loss exit → alert only, no order
+                    log(f"    → ⚠️  Loss alert (no order): {close_reason}")
+                    post_loss_alert(sym, "LEAPS", "sell_to_close", int(qty),
+                                    avg_entry, cur_price, pnl,
+                                    profit_pct * 100, close_reason)
+                    actions.append({
+                        "symbol": sym, "action": "alert_leaps", "reason": close_reason,
+                        "pnl": pnl, "ok": None, "alerted": True,
+                    })
+                else:
+                    # Profit exit → place order
+                    log(f"    → Closing (profit): {close_reason}")
+                    ok, resp = place_order(sym, ticker, "sell_to_close", int(qty), cur_price)
+                    actions.append({
+                        "symbol": sym, "action": "close_leaps", "reason": close_reason,
                     "pnl": round((cur_price - avg_entry) * qty * 100, 2),
                     "ok": ok,
                 })
@@ -1164,6 +1197,36 @@ def execute_csp_trades(csp_list: list[dict], option_buying_power: float,
 # ══════════════════════════════════════════════════════════════════════════════
 # DISCORD HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def post_loss_alert(sym: str, strategy: str, side: str, qty: int,
+                    avg_entry: float, cur_price: float,
+                    pnl: float, pnl_pct: float, reason: str):
+    """
+    Post a manual-action-required alert to Discord for loss exits.
+    No order is placed — the trader decides whether and when to close.
+    """
+    pos_str  = _fmt_position(sym)
+    s        = "+" if pnl >= 0 else ""
+    action   = "BUY TO CLOSE" if side == "buy_to_close" else "SELL TO CLOSE"
+    color    = 0xE74C3C   # red
+
+    discord_post({"embeds": [{
+        "title":       f"⚠️  Manual Action Required — {strategy} Loss Alert [TPT]",
+        "description": "\n".join([
+            f"**Position:** `{pos_str}`  (qty: {qty:+.0f})",
+            f"**Entry:** ${avg_entry:.2f}  →  **Current:** ${cur_price:.2f}",
+            f"**Unrealized P&L:** {s}${pnl:.2f}  ({s}{pnl_pct:.1f}%)",
+            "",
+            f"**Trigger:** {reason}",
+            "",
+            f"**Suggested action:** `{action} {abs(qty)} contract(s) at market`",
+            "_No order placed — awaiting your decision._",
+        ]),
+        "color":  color,
+        "footer": {"text": f"TPT Agent  |  {datetime.now().strftime('%Y-%m-%d %H:%M PT')}"},
+    }]})
+    log(f"    → ⚠️  Loss alert posted to Discord (no order placed)")
+
 
 def discord_post(payload: dict) -> bool:
     try:
@@ -1285,14 +1348,25 @@ def post_run_summary(opening_info: dict, vix: float, deploy_pct: float,
         f"**VIX:** {vix:.1f}  →  Deploy **{deploy_pct*100:.0f}%** of capital",
         "",
     ]
-    if closed_actions:
-        lines.append("**📤 Closed Positions:**")
-        for a in closed_actions:
-            pnl  = a.get("pnl", 0)
-            s    = "+" if pnl >= 0 else ""
-            flag = "✅" if a.get("ok") else "❌"
+    profit_closes = [a for a in closed_actions if not a.get("alerted")]
+    loss_alerts   = [a for a in closed_actions if a.get("alerted")]
+
+    if profit_closes:
+        lines.append("**📤 Closed Positions (profit exits):**")
+        for a in profit_closes:
+            pnl   = a.get("pnl", 0)
+            s     = "+" if pnl >= 0 else ""
+            flag  = "✅" if a.get("ok") else "❌"
             short = _fmt_position(a["symbol"])
             lines.append(f"  {flag} `{short}` — P&L: {s}${pnl:.2f}")
+        lines.append("")
+    if loss_alerts:
+        lines.append("**⚠️ Loss Alerts (manual action required):**")
+        for a in loss_alerts:
+            pnl   = a.get("pnl", 0)
+            s     = "+" if pnl >= 0 else ""
+            short = _fmt_position(a["symbol"])
+            lines.append(f"  ⚠️ `{short}` — P&L: {s}${pnl:.2f}  _(alert sent, no order placed)_")
         lines.append("")
     if csp_executed:
         lines.append("**📥 New CSP Positions:**")
