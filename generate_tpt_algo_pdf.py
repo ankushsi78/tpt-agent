@@ -281,7 +281,7 @@ story.append(spacer(0.1))
 
 phases = [
     (MID_BLUE,   "1", "VIX + Account Snapshot",            "Fetch VIX, portfolio value, cash, and all open positions from Tradier."),
-    (GREEN,      "2", "Manage Existing Positions",          "3-rule exit system: 50% capture, 21-DTE gamma gate, 2× stop-loss (CSP); +5% profit, −50% stop-loss (LEAPS)."),
+    (GREEN,      "2", "Manage Existing Positions",          "Profit exits placed automatically. Loss exits post Discord alert — trader closes manually."),
     (MID_BLUE,   "3", "Refresh Capital After Closes",       "Re-fetch account after any closes to get updated cash and buying power."),
     (GREY_DARK,  "4", "Load Tickers + Hard Filters",        "Pull approved stock list, fetch price history, apply 200 SMA and earnings hard filters."),
     (GREEN,      "5", "CSP Screening + Scoring",            "Score each stock on 5 technical signals, find best put contract, rank by score then ARR/Delta ratio."),
@@ -342,37 +342,76 @@ story.append(PageBreak())
 # ════════════════════════════════════════════════════════════
 # 5. PHASE 2 — POSITION MANAGEMENT
 # ════════════════════════════════════════════════════════════
-story.append(section_header("5.  Phase 2 — Position Management (3-Rule Exit System)", DARK_BLUE))
+story.append(section_header("5.  Phase 2 — Position Management", DARK_BLUE))
 story.append(spacer(0.1))
 story.append(Paragraph(
     "Before opening any new positions, the bot scans every open position. "
-    "Three independent rules can trigger a close — any one of them fires the exit:", BODY))
+    "Three independent rules evaluate each position. "
+    "<b>Profit exits are placed automatically. Loss exits post a Discord alert — the trader decides manually.</b>", BODY))
+story.append(spacer(0.1))
+
+story.append(info_box(
+    "🤖  <b>Auto-order:</b>  Profit exits only — bot places the closing order immediately.<br/>"
+    "⚠️  <b>Discord alert:</b>  Loss exits only — bot posts a recommendation, no order placed. "
+    "Trader reviews and closes manually.",
+    LIGHT_BLUE, MID_BLUE))
 story.append(spacer(0.1))
 
 story.append(Paragraph("CSP Exit Rules — Short Puts (checked in priority order)", H2))
-story.append(info_box(
-    "<b>Rule #1 — 50% Premium Capture:</b><br/>"
-    "Trigger: (Avg Entry − Current) / Avg Entry ≥ 50%<br/>"
-    "Action: BUY TO CLOSE. Lock in the gain, free the collateral.<br/><br/>"
-    "<b>Rule #2 — 21-DTE Gamma Gate:</b><br/>"
-    "Trigger: DTE ≤ 21 AND P&amp;L ≥ −50% of premium<br/>"
-    "Action: BUY TO CLOSE. Avoid gamma explosion in final 3 weeks.<br/><br/>"
-    "<b>Rule #3 — Stop-Loss (2× Premium):</b><br/>"
-    "Trigger: Current price ≥ Avg Entry × 3.0  (loss = 2× premium received)<br/>"
-    "Action: BUY TO CLOSE. Hard cap on losses.", LIGHT_GREEN, GREEN))
+
+csp_exit_rows = [
+    ["Rule", "Trigger", "P&L State", "Action"],
+    ["#1 — 50% Capture",
+     "(Avg Entry − Current) / Avg Entry ≥ 50%",
+     "Profit",
+     "🤖 AUTO — BUY TO CLOSE"],
+    ["#2 — 21-DTE Exit\n(flat or profit)",
+     "DTE ≤ 21 AND captured ≥ 0%",
+     "Profit / Flat",
+     "🤖 AUTO — BUY TO CLOSE"],
+    ["#2 — 21-DTE Exit\n(small loss)",
+     "DTE ≤ 21 AND −50% ≤ captured < 0%",
+     "Small loss",
+     "⚠️ ALERT — manual close"],
+    ["#3 — Stop-Loss",
+     "Current ≥ Avg Entry × 3.0\n(loss = 2× premium received)",
+     "Loss",
+     "⚠️ ALERT — manual close"],
+]
+story.append(data_table(csp_exit_rows[0], csp_exit_rows[1:],
+             [1.3*inch, 2.3*inch, 1.0*inch, 1.8*inch], GREEN))
 story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Exit Rules — Long Calls", H2))
-story.append(info_box(
-    "<b>Rule #1 — Profit Target (+5%):</b><br/>"
-    "Trigger: (Current − Avg Entry) / Avg Entry ≥ 5%<br/>"
-    "Action: SELL TO CLOSE. Take the gain quickly, redeploy capital.<br/><br/>"
-    "<b>Rule #2 — Stop-Loss (−50%):</b><br/>"
-    "Trigger: (Current − Avg Entry) / Avg Entry ≤ −50%<br/>"
-    "Action: SELL TO CLOSE. Hard cap on LEAPS losses.", LIGHT_GREEN, GREEN))
+
+leaps_exit_rows = [
+    ["Rule", "Trigger", "P&L State", "Action"],
+    ["#1 — Profit Target",
+     "(Current − Avg Entry) / Avg Entry ≥ 5%",
+     "Profit",
+     "🤖 AUTO — SELL TO CLOSE"],
+    ["#2 — Stop-Loss",
+     "(Current − Avg Entry) / Avg Entry ≤ −50%",
+     "Loss",
+     "⚠️ ALERT — manual close"],
+]
+story.append(data_table(leaps_exit_rows[0], leaps_exit_rows[1:],
+             [1.3*inch, 2.3*inch, 1.0*inch, 1.8*inch], PURPLE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Order Execution Mechanics", H2))
+story.append(Paragraph("Discord Loss Alert Format", H2))
+story.append(info_box(
+    "When a loss exit triggers, the bot posts an alert to <b>#beta-ai-trades</b> containing:<br/>"
+    "  •  Position (compact format: e.g. NVDA $195P Jun26)<br/>"
+    "  •  Entry price → current price<br/>"
+    "  •  Unrealized P&amp;L ($ and %)<br/>"
+    "  •  Trigger reason (which rule fired)<br/>"
+    "  •  Suggested action (BUY/SELL TO CLOSE N contracts at market)<br/>"
+    "  •  Confirmation: <i>No order placed — awaiting your decision.</i>",
+    LIGHT_RED, RED))
+story.append(spacer(0.1))
+
+story.append(Paragraph("Order Execution Mechanics (profit exits only)", H2))
 story.append(bullet("Fetch live bid/ask from Tradier <b>markets/quotes</b> endpoint"))
 story.append(bullet("Calculate mid-price: <b>(bid + ask) / 2</b>"))
 story.append(bullet("Place a <b>limit order at mid-price</b>, time-in-force = day"))
@@ -668,11 +707,12 @@ story.append(spacer(0.1))
 
 discord_rows = [
     ["Post #", "Content",               "Always Posted?",   "Format"],
-    ["1",      "Run Summary",           "Yes",              "Embed: opening balance, VIX, positions closed, positions opened, closing balance"],
-    ["2",      "Open Positions Table",  "If positions exist","Code block: symbol, type, qty, entry, current, P&L $, P&L %"],
-    ["3",      "LEAPS Criteria Embed",  "Yes",              "Embed: VIX gate status, criteria list, DTE/delta targets"],
-    ["4",      "LEAPS Summary Table",   "If VIX in range + picks found", "Code block: ticker, score, strike, expiry, cost, delta"],
-    ["5",      "CSP Summary Table",     "If picks found",   "Code block: ticker, score, strike, expiry, premium, ARR, delta"],
+    ["1",      "Run Summary",           "Yes",              "Embed: balance, VIX, profit closes (auto-ordered), loss alerts (manual), new positions"],
+    ["2",      "Open Positions Table",  "If positions exist","Code block: position, qty, P&L $, P&L %"],
+    ["3",      "Loss Alert (per position)", "If loss exit triggered", "Red embed: position, P&L, trigger reason, suggested action. No order placed."],
+    ["4",      "LEAPS Criteria Embed",  "Yes",              "Embed: VIX gate status, criteria list, DTE/delta targets"],
+    ["5",      "LEAPS Summary Table",   "If VIX in range + picks found", "Code block: ticker, strike, delta, expiry, cost"],
+    ["6",      "CSP Summary Table",     "If picks found",   "Code block: ticker, strike, delta, expiry, premium, ARR"],
 ]
 story.append(data_table(discord_rows[0], discord_rows[1:],
              [0.5*inch, 1.6*inch, 1.5*inch, 2.9*inch], DARK_BLUE))
@@ -696,11 +736,13 @@ flow = [
     ("Fetch all open positions", MID_BLUE),
     ("─── POSITION MANAGEMENT ───", GREY_DARK),
     ("For each open SHORT PUT (CSP):", GREEN),
-    ("    • Fetch live Tradier mid-price", GREEN),
-    ("    • If (entry − current) / entry ≥ 50%  →  BUY TO CLOSE at mid", GREEN),
-    ("For each open LONG CALL with DTE > 200 (LEAPS):", GREEN),
-    ("    • Fetch live Tradier mid-price", GREEN),
-    ("    • If (current − entry) / entry ≥ 5%   →  SELL TO CLOSE at mid", GREEN),
+    ("    • If stop-loss triggered (loss ≥ 2× premium)  →  ⚠️ DISCORD ALERT only, no order", RED),
+    ("    • If 50% premium captured  →  🤖 BUY TO CLOSE at mid (auto)", GREEN),
+    ("    • If DTE ≤ 21 and in profit  →  🤖 BUY TO CLOSE at mid (auto)", GREEN),
+    ("    • If DTE ≤ 21 and at loss  →  ⚠️ DISCORD ALERT only, no order", RED),
+    ("For each open LONG CALL (LEAPS):", PURPLE),
+    ("    • If stop-loss triggered (loss ≥ 50%)  →  ⚠️ DISCORD ALERT only, no order", RED),
+    ("    • If profit target reached (gain ≥ 5%)  →  🤖 SELL TO CLOSE at mid (auto)", PURPLE),
     ("Re-fetch account to capture released capital", MID_BLUE),
     ("─── STOCK SCREENING ───", GREY_DARK),
     ("Load approved ticker list from Google Sheets", GREY_DARK),
