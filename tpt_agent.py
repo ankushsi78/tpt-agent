@@ -439,12 +439,6 @@ def vix_to_deploy_pct(vix: float) -> float:
     return VIX_DEPLOY_VERY_LOW
 
 
-def delta_range_for_vix(vix: float) -> tuple[float, float]:
-    if vix >= 25: return DELTA_MIN_HIGH_VIX, DELTA_MAX_HIGH_VIX
-    if vix >= 15: return DELTA_MIN_MID_VIX,  DELTA_MAX_MID_VIX
-    return DELTA_MIN_LOW_VIX, DELTA_MAX_LOW_VIX
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # EARNINGS FILTER  (yfinance — Tradier has no earnings calendar)
 # ══════════════════════════════════════════════════════════════════════════════
