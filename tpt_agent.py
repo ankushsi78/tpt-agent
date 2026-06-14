@@ -692,7 +692,7 @@ def find_best_csp(ticker: str, S: float, delta_min: float, delta_max: float) -> 
             if c.get("option_type") != "put":
                 continue
             oi  = int(c.get("open_interest", 0) or 0)
-            if oi < MIN_OPEN_INTEREST:
+            if 0 < oi < MIN_OPEN_INTEREST:   # 0 = data unavailable, allow through
                 continue
             mid = _contract_mid(c)
             if not mid or mid <= 0:
