@@ -68,7 +68,7 @@ BETA_AI_TRADES_WEBHOOK = (
 APPROVED_STOCKS_URL = os.getenv("APPROVED_STOCKS_URL", "")
 
 # — CSP DTE window —
-MIN_DTE = int(os.getenv("MIN_DTE", "20"))
+MIN_DTE = int(os.getenv("MIN_DTE", "30"))
 MAX_DTE = int(os.getenv("MAX_DTE", "45"))
 
 # — CSP Delta by BB position (per-stock, replaces VIX-based global range) —
@@ -130,7 +130,7 @@ LEAPS_VIX_FEAR_MIN      = float(os.getenv("LEAPS_VIX_FEAR_MIN", "21"))   # VIX g
 CSP_CLOSE_PREMIUM_PCT   = 0.50   # close CSP when 50% of premium captured
 CSP_DTE_EXIT            = 21     # #1: close CSPs at 21 DTE regardless of P&L (if any profit or small loss)
 CSP_STOP_LOSS_MULT      = 2.0    # #2: close CSP when loss = 2× premium received (current = 3× entry)
-LEAPS_CLOSE_PROFIT_PCT  = 0.25   # #3: raised from 0.10 — close LEAPS at +25% profit
+LEAPS_CLOSE_PROFIT_PCT  = 0.05   # #3: close LEAPS at +5% profit
 LEAPS_STOP_LOSS_PCT     = 0.50   # #3 companion: close LEAPS if down 50%
 
 # — VIX deployment tiers —
