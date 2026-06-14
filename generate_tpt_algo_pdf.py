@@ -231,7 +231,6 @@ arch_rows = [
     ["Stock price data",    "Tradier markets/history + markets/quotes — real-time"],
     ["VIX",                 "Tradier markets/quotes ($VIX.X) — yfinance fallback"],
     ["Earnings filter",     "yfinance only (Tradier has no earnings calendar)"],
-    ["Beta calculation",    "Computed from Tradier 3-month history vs SPY"],
     ["Order type",          "Limit orders at live mid-price (bid+ask)/2"],
     ["Log file",            "tpt_agent.log"],
     ["Discord channel",     "#beta-ai-trades (hardcoded webhook — no other channel)"],
@@ -253,14 +252,13 @@ story.append(spacer(0.1))
 
 ds_rows = [
     ["Data Point",                  "Source",           "Latency",      "Used For"],
-    ["Stock OHLCV bars",            "Tradier /markets/history",  "Real-time", "SMA 20/50/200, Bollinger Bands, RSI, beta"],
+    ["Stock OHLCV bars",            "Tradier /markets/history",  "Real-time", "SMA 20/50/200, Bollinger Bands, RSI"],
     ["Real-time stock quote",       "Tradier /markets/quotes",   "Real-time", "Current price, day change %"],
     ["Options chain (bid/ask/OI)",  "Tradier /markets/options/chains", "Real-time", "Strike selection, ARR, OI filter"],
     ["Implied Volatility (IV)",     "Tradier greeks.mid_iv",     "Real-time", "IV scoring criterion, BS delta fallback"],
     ["Options Delta (CSP)",         "Tradier greeks.delta",      "Real-time", "Delta filter vs BB-position-based range (per stock)"],
     ["Options Delta (LEAPS)",       "Black-Scholes computed",    "Real-time", "Always recomputed — Tradier greeks unreliable for 1-2yr options"],
     ["VIX",                         "Tradier $VIX.X → yfinance fallback", "Real-time", "Deploy % and LEAPS gate"],
-    ["Beta vs SPY",                 "Computed from Tradier history", "Real-time", "LEAPS Bollinger Band criterion"],
     ["Earnings dates",              "yfinance (only yfinance use)", "Daily",  "Hard filter — skip if earnings in DTE window"],
     ["Option expirations",          "Tradier /markets/options/expirations", "Real-time", "Finding valid DTE windows"],
     ["Live mid-price at execution", "Tradier /markets/quotes",   "Real-time", "Limit price on every order placed"],
@@ -441,7 +439,6 @@ tech_rows = [
     ["Bollinger Lower", "SMA 20 − 2 × std(last 20 closes)",     "LEAPS scoring (near lower band)"],
     ["RSI (14)",        "Wilder's smoothed 14-period RSI",      "CSP hard gate (≥65=skip) + CSP scoring (<50=+1) + LEAPS scoring (<70=+1)"],
     ["Day Change %",    "(current − prev_close) / prev_close",  "CSP scoring (healthy pullback)"],
-    ["Beta vs SPY",     "Cov(stock,SPY) / Var(SPY) — 3 months","LEAPS BB criterion (beta-adjusted)"],
 ]
 story.append(data_table(tech_rows[0], tech_rows[1:],
              [1.3*inch, 2.5*inch, 2.7*inch], DARK_BLUE))
@@ -469,13 +466,23 @@ story.append(PageBreak())
 story.append(section_header("7.  Phase 5 — CSP Screening & Scoring", DARK_BLUE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 1 — RSI Hard Gate (NEW)", H2))
+story.append(Paragraph("Step 1 — RSI Hard Gate", H2))
 story.append(info_box(
     "<b>If RSI ≥ 65 → SKIP immediately.</b>  Overbought stocks have high mean-reversion risk "
     "within the 30–45 DTE window.  No options lookup is performed.", LIGHT_RED, RED))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 2 — BB-Based Delta Range (NEW — replaces VIX-global range)", H2))
+story.append(Paragraph("Step 2 — Pre-Score Gate (skip chain fetch early)", H2))
+story.append(info_box(
+    "Before fetching any option chain, compute the <b>stock-level pre-score</b> (max 3): "
+    "price below BB midline, healthy pullback today, RSI &lt; 50. "
+    "The other 2 score points (strike &gt; 50 SMA, IV ≥ 40%) are contract-level. "
+    "Since MIN_SCORE_TO_TRADE = 3 and at most 2 contract points can be added, any stock with "
+    "pre-score &lt; 1 can never qualify → <b>skip the chain fetch.</b> "
+    "Correctness-preserving: it cannot drop a stock that would have qualified.", LIGHT_BLUE, MID_BLUE))
+story.append(spacer(0.1))
+
+story.append(Paragraph("Step 3 — BB-Based Delta Range", H2))
 bb_delta_rows = [
     ["BB Position",                         "Delta Range",   "Rationale"],
     ["Price ≤ Lower BB + 3%",               "0.25 – 0.35\n(Aggressive)",   "Stock oversold → high reversal probability → sell closer to ATM"],
@@ -486,7 +493,7 @@ story.append(data_table(bb_delta_rows[0], bb_delta_rows[1:],
              [2.2*inch, 1.4*inch, 2.9*inch], GREEN))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 3 — Technical Scoring (max 5 points)", H2))
+story.append(Paragraph("Step 4 — Technical Scoring (max 5 points)", H2))
 score_rows = [
     ["Signal",                      "Points", "Condition"],
     ["Above 50-day SMA",            "+1",     "Stock price > SMA 50 (medium-term uptrend)"],
@@ -503,7 +510,7 @@ story.append(Paragraph(
     "Score = 5 → flagged HIGH CONVICTION.", NOTE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 4 — Find Best Put Contract (Tradier Options Chain)", H2))
+story.append(Paragraph("Step 5 — Find Best Put Contract (Tradier Options Chain)", H2))
 story.append(Paragraph(
     "For each expiration date between MIN_DTE (30) and MAX_DTE (45) days:", BODY))
 story.append(bullet("Fetch full options chain from Tradier with <b>greeks=true</b>"))
@@ -521,7 +528,7 @@ story.append(info_box(
     LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
 
-story.append(Paragraph("Step 5 — Rank and Select Top 5", H2))
+story.append(Paragraph("Step 6 — Rank and Select Top 5", H2))
 story.append(bullet("Sort qualifying CSPs by the following priority:"))
 story.append(bullet("<b>1. Score DESC</b> — technical setup quality (primary)"))
 story.append(bullet("<b>2. ARR ÷ Delta DESC</b> — normalized risk-adjusted return (secondary)"))
@@ -548,28 +555,33 @@ story.append(Paragraph(
     "Runs on the same stock universe that passed the hard filters in Phase 4.", BODY))
 story.append(spacer(0.1))
 
-story.append(Paragraph("LEAPS Scoring Criteria (3 points total)", H2))
+story.append(Paragraph("LEAPS Scoring Criteria (3 points total — all stock-level)", H2))
 leaps_score_rows = [
-    ["Criterion",               "Points", "Logic",                                                "Notes"],
-    ["Earnings safety",         "+1",     "Next earnings &gt; 15 days away",                      "Unknown date = allow through with warning"],
-    ["Bollinger Band position", "+1",     "Beta ≤ 2.2: price within 5% of lower BB\nBeta &gt; 2.2: price at/below SMA 20", "Beta-adjusted — high-beta stocks need tighter filter"],
-    ["RSI not overbought",      "+1",     "RSI(14) &lt; 70",                                      "Wilder's smoothed RSI from Tradier daily bars"],
+    ["Criterion",          "Points", "Logic",            "Notes"],
+    ["Above 200-day SMA",  "+1",     "Price &gt; SMA 200", "Long-term uptrend confirmed"],
+    ["Above 50-day SMA",   "+1",     "Price &gt; SMA 50",  "Medium-term momentum intact"],
+    ["RSI not overbought", "+1",     "RSI(14) &lt; 70",    "Wilder's smoothed RSI from Tradier daily bars"],
 ]
 story.append(data_table(leaps_score_rows[0], leaps_score_rows[1:],
-             [1.3*inch, 0.7*inch, 2.2*inch, 2.3*inch], PURPLE))
+             [1.5*inch, 0.7*inch, 1.5*inch, 2.8*inch], PURPLE))
 story.append(spacer(0.08))
 story.append(bullet("Minimum score to qualify for LEAPS: <b>2 out of 3</b>"))
+story.append(bullet("All three criteria are <b>stock-level</b> — the score is computed BEFORE any "
+                    "option chain is fetched, so chains are only pulled for stocks that already qualify."))
 story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Contract Selection (Tradier Options Chain)", H2))
 story.append(bullet("Expiration window: <b>365 to 730 days (1–2 years out)</b>"))
+story.append(bullet("<b>Farthest expiry first:</b> fetch the longest-dated expiry in the window "
+                    "(max time value, lowest theta — ideal for stock replacement). Fall back to the "
+                    "next-farthest only if it yields no qualifying contract. ~1 chain/stock vs 6–10 before."))
 story.append(bullet("Contract type: <b>Call options only</b>"))
 story.append(bullet("OI filter: skip only if confirmed OI &gt; 0 but &lt; 50 (OI = 0 means data unavailable, allow through)"))
 story.append(bullet("Price: (bid+ask)/2 → ask → bid → lastPrice (in priority order)"))
 story.append(bullet("Delta: use <b>Tradier greeks.delta</b> if available, otherwise compute via <b>Black-Scholes</b>"))
 story.append(bullet("For BS computation: use Tradier IV if IV ≥ 0.20, else default to <b>0.45</b> (LEAPS greeks are unreliable in data feeds)"))
-story.append(bullet("Delta filter: <b>0.70 ≤ delta ≤ 0.85</b> (deep in the money, lowered from 0.80–0.99)"))
-story.append(bullet("Selection: pick the contract whose delta is <b>closest to 0.77 (target)</b>"))
+story.append(bullet("Delta filter: <b>0.70 ≤ delta ≤ 0.85</b> (deep in the money)"))
+story.append(bullet("Selection: within the chosen expiry, pick the contract whose delta is <b>closest to 0.77 (target)</b>"))
 story.append(spacer(0.1))
 
 story.append(Paragraph("LEAPS Ranking", H2))
@@ -683,14 +695,25 @@ leaps_param_rows = [
     ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
     ["LEAPS_RSI_OVERBOUGHT",    "70",        "RSI threshold — below this = not overbought (+1 pt)"],
     ["LEAPS_RSI_PERIOD",        "14",        "RSI calculation period (Wilder's smoothed)"],
-    ["LEAPS_HIGH_BETA",         "2.2",       "Beta above which stricter BB criterion applies"],
-    ["LEAPS_BB_MAX_DIST_PCT",   "5%",        "Max % above lower BB for normal-beta stocks"],
-    ["LEAPS_MIN_EARNINGS_DAYS", "15",        "Minimum days to next earnings for LEAPS safety"],
     ["LEAPS_CLOSE_PROFIT_PCT",  "5%",        "Close LEAPS when unrealized profit reaches this (lowered from 25%)"],
     ["LEAPS_STOP_LOSS_PCT",     "50%",       "Close LEAPS when unrealized loss reaches this"],
 ]
 story.append(data_table(leaps_param_rows[0], leaps_param_rows[1:],
              [2.2*inch, 1.0*inch, 3.3*inch], PURPLE))
+story.append(spacer(0.1))
+
+story.append(Paragraph("Performance Parameters", H2))
+perf_param_rows = [
+    ["Parameter",   "Default", "Description"],
+    ["MAX_WORKERS", "6",       "Thread-pool size for parallel per-ticker screening (Phases 4, 5, 6)"],
+]
+story.append(data_table(perf_param_rows[0], perf_param_rows[1:],
+             [2.2*inch, 1.0*inch, 3.3*inch], DARK_BLUE))
+story.append(spacer(0.05))
+story.append(Paragraph(
+    "Performance: per-ticker screening runs in parallel; option expirations are cached "
+    "per ticker; LEAPS fetch only the farthest expiry; CSP and LEAPS gate on stock-level "
+    "score before any chain fetch. A full run takes ≈ 1 minute (down from ≈ 7 minutes).", NOTE))
 
 story.append(PageBreak())
 
@@ -746,28 +769,26 @@ flow = [
     ("Re-fetch account to capture released capital", MID_BLUE),
     ("─── STOCK SCREENING ───", GREY_DARK),
     ("Load approved ticker list from Google Sheets", GREY_DARK),
-    ("For each ticker:", GREY_DARK),
-    ("    • Fetch 310 days OHLCV from Tradier  →  compute SMA20/50/200, BB, RSI, beta", GREY_DARK),
-    ("    • Fetch real-time quote from Tradier", GREY_DARK),
+    ("For each ticker (parallel, ThreadPoolExecutor — MAX_WORKERS=6):", GREY_DARK),
+    ("    • Fetch 310 days OHLCV + quote from Tradier  →  compute SMA20/50/200, BB, RSI", GREY_DARK),
     ("    • HARD FILTER 1: skip if price ≤ SMA 200", RED),
     ("    • HARD FILTER 2: skip if earnings within MAX_DTE days (yfinance)", RED),
-    ("─── CSP SCORING ───", GREEN),
+    ("─── CSP SCORING (parallel) ───", GREEN),
     ("For each stock passing hard filters:", GREEN),
     ("    • Hard gate: RSI ≥ 65 → skip (overbought)", GREEN),
+    ("    • Pre-score gate: skip chain fetch if stock-level pre-score can't reach 3", GREEN),
     ("    • BB-based delta range: near lower BB=0.25–0.35 / between BBs=0.15–0.25 / above mid=0.08–0.15", GREEN),
-    ("    • Score: above 50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • Fetch put chain from Tradier (greeks=true)", GREEN),
     ("    • Filter puts: OI≥50 (rejects OI=0), delta in BB-tier range, ARR 40–70%", GREEN),
+    ("    • Score: strike>50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
-    ("─── LEAPS SCORING (only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
+    ("─── LEAPS SCORING (parallel; only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
     ("For each stock passing hard filters:", PURPLE),
-    ("    • Criterion 1: earnings > 15 days away (+1)", PURPLE),
-    ("    • Criterion 2: near lower Bollinger Band or beta-adjusted midline (+1)", PURPLE),
-    ("    • Criterion 3: RSI(14) < 70 (+1)", PURPLE),
-    ("    • If score < 2: skip", PURPLE),
-    ("    • Fetch call chain from Tradier (DTE 365–730, greeks=true)", PURPLE),
-    ("    • Filter calls: delta 0.70–0.85; pick closest to delta 0.77", PURPLE),
+    ("    • Score FIRST (stock-level): above 200 SMA (+1), above 50 SMA (+1), RSI<70 (+1)", PURPLE),
+    ("    • If score < 2: skip (no chain fetch)", PURPLE),
+    ("    • Fetch ONLY the farthest expiry chain (DTE 365–730); fall back if no contract", PURPLE),
+    ("    • Filter calls: OI≥50, delta 0.70–0.85; pick closest to delta 0.77", PURPLE),
     ("Sort LEAPS by score DESC, RSI ASC  →  take top 5", PURPLE),
     ("─── EXECUTION ───", DARK_BLUE),
     ("LEAPS: iterate top-ranked first, 1 contract each, until 15% budget exhausted", PURPLE),
