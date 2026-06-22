@@ -1,0 +1,100 @@
+<!--
+  ════════════════════════════════════════════════════════════════════════════
+  PASTE-READY <head> SNIPPET for the OptionWheel Pro index.html
+  ════════════════════════════════════════════════════════════════════════════
+
+  HOW TO USE
+  ----------
+  index.html is GLOBAL to the whole SPA, so there are two blocks below:
+
+    BLOCK A — App-wide. Safe to paste into <head> as-is. Contains Google
+              Analytics 4 (tracks every page) + sensible sitewide defaults.
+
+    BLOCK B — Page-specific to /TraderStages. Only paste into index.html if THIS
+              is a dedicated landing deployment, OR if base44 supports per-page
+              <head> injection. Otherwise DON'T — the TraderStages.jsx component
+              already injects these tags at runtime for the SPA, which is enough.
+
+  Replace in both blocks:
+    • G-XXXXXXXXXX            → your real GA4 Measurement ID
+    • https://optionwheelpro.com → your real public domain
+  ════════════════════════════════════════════════════════════════════════════
+-->
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════════╗ -->
+<!-- ║  BLOCK A — APP-WIDE (safe to add to index.html <head>)                ║ -->
+<!-- ╚══════════════════════════════════════════════════════════════════════╝ -->
+
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script>
+
+<!-- If you add GA4 here, set GA_MEASUREMENT_ID back to '' in TraderStages.jsx so
+     the page doesn't load gtag twice (its initGA() no-ops when not configured). -->
+
+<link rel="canonical" href="https://optionwheelpro.com/" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#0b0f17" />
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════════╗ -->
+<!-- ║  BLOCK B — PAGE-SPECIFIC to /TraderStages (see "HOW TO USE" above)     ║ -->
+<!-- ╚══════════════════════════════════════════════════════════════════════╝ -->
+
+<title>What Stage Trader Are You? — The 7 Stages of a Trader Quiz (Mark Douglas)</title>
+<meta name="description" content="Free quiz based on Mark Douglas's 7 stages of a trader. Find which stage you're in — from Blissful Ignorance to Unconscious Competence — and get the one behavioral change to reach the next stage. No login required." />
+<meta name="keywords" content="Mark Douglas, 7 stages of a trader, trading psychology, Trading in the Zone, which trading stage am I in, trader stages quiz, trader development stages" />
+<link rel="canonical" href="https://optionwheelpro.com/TraderStages" />
+
+<!-- Open Graph -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="The 7 Stages of a Trader — Which Stage Are You In?" />
+<meta property="og:description" content="A free quiz based on Mark Douglas's 7 stages of trader psychology. Find your stage and the one change that moves you to the next." />
+<meta property="og:url" content="https://optionwheelpro.com/TraderStages" />
+<meta property="og:image" content="https://optionwheelpro.com/og-trader-stages.png" />
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="The 7 Stages of a Trader — Which Stage Are You In?" />
+<meta name="twitter:description" content="Free trader-psychology quiz based on Mark Douglas. Find your stage in ~2 minutes." />
+<meta name="twitter:image" content="https://optionwheelpro.com/og-trader-stages.png" />
+
+<!-- Structured data: FAQ (rich-result eligible) -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What are the 7 stages of a trader?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The seven stages are: 1) Blissful Ignorance, 2) The Awakening, 3) The Search, 4) Awareness, 5) The Rule Builder, 6) Consistent Execution, and 7) Unconscious Competence. They describe the psychological journey every trader walks on the way to lasting consistency." } },
+    { "@type": "Question", "name": "How do I know which trading stage I'm in?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Take the free 8-question assessment. It places you using a 'weakest-link' method: because the stages are a sequential ladder that can't be skipped, you're anchored to the lowest stage where you still show a repeated, active struggle." } },
+    { "@type": "Question", "name": "Which stage do most traders get stuck in or quit?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Most traders quit during Stage 2 (The Awakening), right after their first painful loss, or get stuck for years in Stage 3 (The Search), endlessly hunting for a better strategy instead of learning to execute the one they have." } },
+    { "@type": "Question", "name": "Is this based on Mark Douglas and Trading in the Zone?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. This stage framework is drawn from the trader-psychology teaching popularized by Mark Douglas, author of Trading in the Zone and The Disciplined Trader." } },
+    { "@type": "Question", "name": "How do I move from one stage to the next?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Every transition is behavioral, not intellectual. You advance by changing one behavior at a time: writing down rules, tracking your daily rule-compliance, and repeating disciplined execution until it becomes automatic." } }
+  ]
+}
+</script>
+
+<!-- Structured data: WebApplication -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Trader Stage Finder",
+  "url": "https://optionwheelpro.com/TraderStages",
+  "applicationCategory": "FinanceApplication",
+  "operatingSystem": "Web",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "description": "Free quiz based on Mark Douglas's 7 stages of a trader. Find which trading psychology stage you are in and how to reach the next."
+}
+</script>

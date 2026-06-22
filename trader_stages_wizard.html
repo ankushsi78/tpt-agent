@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The 7 Stages of a Trader — Find Your Stage</title>
+<style>
+  :root{
+    --bg:#0b0f17;
+    --bg2:#111826;
+    --card:#151d2b;
+    --line:#243047;
+    --txt:#e8edf6;
+    --muted:#9aa7bd;
+    --accent:#3ad29f;
+    --accent2:#5b8cff;
+    --warn:#f5a623;
+    --danger:#ff6b6b;
+    --gold:#f5c451;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 700px at 50% -10%,#16223a 0%,var(--bg) 55%);
+    color:var(--txt);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    padding:32px 18px 80px;
+  }
+  .wrap{max-width:780px;margin:0 auto}
+  .badge{display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+    border:1px solid var(--line);padding:6px 12px;border-radius:999px;background:rgba(58,210,159,.06)}
+  h1{font-size:32px;line-height:1.15;margin:18px 0 10px;font-weight:740}
+  h1 .grad{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--muted);font-size:16px;max-width:620px}
+  .card{background:linear-gradient(180deg,var(--card),var(--bg2));border:1px solid var(--line);
+    border-radius:18px;padding:30px;margin-top:26px;box-shadow:0 24px 60px -30px rgba(0,0,0,.8)}
+  .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font-size:13.5px}
+  .meta b{color:var(--txt)}
+  .btn{appearance:none;border:none;cursor:pointer;font:inherit;font-weight:650;border-radius:12px;
+    padding:14px 26px;transition:.18s transform,.18s background,.18s opacity;}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:linear-gradient(90deg,var(--accent),#2fb88a);color:#05140f}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .btn-ghost:hover{color:var(--txt);border-color:#34425f}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .center{justify-content:center}
+  .spread{justify-content:space-between}
+  /* progress */
+  .progress{height:7px;background:#1c2740;border-radius:999px;overflow:hidden;margin:4px 0 22px}
+  .progress > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));
+    border-radius:999px;transition:width .35s ease}
+  .qcount{color:var(--muted);font-size:13px;letter-spacing:.04em;margin-bottom:6px}
+  .qtext{font-size:22px;font-weight:680;margin:2px 0 22px;line-height:1.3}
+  .opts{display:flex;flex-direction:column;gap:12px}
+  .opt{display:flex;gap:14px;align-items:flex-start;text-align:left;width:100%;
+    background:#0f1623;border:1px solid var(--line);color:var(--txt);
+    padding:16px 18px;border-radius:13px;cursor:pointer;transition:.15s;font:inherit}
+  .opt:hover{border-color:var(--accent2);background:#121d31}
+  .opt.sel{border-color:var(--accent);background:rgba(58,210,159,.08);box-shadow:0 0 0 1px var(--accent) inset}
+  .dot{flex:0 0 auto;width:20px;height:20px;border-radius:50%;border:2px solid #3a4a68;margin-top:2px;position:relative;transition:.15s}
+  .opt.sel .dot{border-color:var(--accent);background:var(--accent)}
+  .opt.sel .dot:after{content:"";position:absolute;inset:4px;background:#05140f;border-radius:50%}
+  .nav{margin-top:26px;display:flex;justify-content:space-between;align-items:center}
+  .hidden{display:none}
+  /* result */
+  .stagebig{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .stagename{font-size:30px;font-weight:760;margin:6px 0 4px}
+  .stagename .n{color:var(--accent)}
+  .tagline{color:var(--muted);font-style:italic;margin-bottom:6px}
+  .ladder{display:flex;flex-direction:column;gap:0;margin:24px 0 8px}
+  .step{display:flex;align-items:center;gap:14px;padding:9px 0;position:relative}
+  .step .ring{flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:2px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--muted);
+    background:var(--bg2);z-index:2}
+  .step .lbl{font-size:14.5px;color:var(--muted)}
+  .step .connector{position:absolute;left:14px;top:30px;width:2px;height:calc(100% - 4px);background:var(--line);z-index:1}
+  .step.done .ring{border-color:var(--accent);color:var(--accent)}
+  .step.done .lbl{color:var(--txt)}
+  .step.current .ring{border-color:var(--gold);background:var(--gold);color:#1a1405;box-shadow:0 0 0 5px rgba(245,196,81,.16)}
+  .step.current .lbl{color:var(--gold);font-weight:720}
+  .step:last-child .connector{display:none}
+  .section-h{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);
+    margin:26px 0 10px;font-weight:700}
+  .panel{background:#0f1623;border:1px solid var(--line);border-radius:13px;padding:18px 20px;margin-top:4px}
+  .panel.where{border-left:3px solid var(--accent)}
+  .panel.trap{border-left:3px solid var(--warn)}
+  .panel.why{border-left:3px solid var(--accent2);background:rgba(91,140,255,.05)}
+  .panel p{color:#cdd6e6}
+  .panel p + p{margin-top:10px}
+  .nextbox{background:linear-gradient(180deg,rgba(91,140,255,.10),rgba(91,140,255,.02));
+    border:1px solid #2c3c63;border-radius:14px;padding:20px;margin-top:6px}
+  .nextbox .to{font-size:14px;color:var(--muted)}
+  .nextbox .to b{color:var(--accent2)}
+  ul.actions{list-style:none;margin-top:14px;display:flex;flex-direction:column;gap:11px}
+  ul.actions li{display:flex;gap:12px;align-items:flex-start;color:#dbe3f1;font-size:15px}
+  ul.actions li .chk{flex:0 0 auto;width:22px;height:22px;border-radius:7px;background:rgba(58,210,159,.12);
+    border:1px solid var(--accent);color:var(--accent);display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:800;margin-top:1px}
+  .tonight{margin-top:18px;background:linear-gradient(90deg,rgba(245,196,81,.12),transparent);
+    border:1px solid #4a3f1d;border-radius:13px;padding:16px 18px}
+  .tonight .k{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:700}
+  .tonight p{margin-top:6px;font-size:15.5px;color:#f4ead0}
+  .quote{margin-top:26px;text-align:center;color:var(--muted);font-style:italic;font-size:15px}
+  .foot{margin-top:30px;text-align:center;color:#62708a;font-size:12.5px;line-height:1.7}
+  a{color:var(--accent2)}
+  @media(max-width:560px){
+    body{padding:22px 13px 60px}
+    h1{font-size:26px}.qtext{font-size:19px}.stagename{font-size:24px}.card{padding:22px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ INTRO ============ -->
+  <section id="intro">
+    <span class="badge">Trader Psychology · Mark Douglas Framework</span>
+    <h1>Which of the <span class="grad">7 stages</span><br>are you actually in?</h1>
+    <p class="sub">Every trader who reaches lasting consistency walks the same road. The frustration you feel comes from not knowing where you are on it. Answer honestly &mdash; not where you <em>want</em> to be, where you <em>actually</em> are &mdash; and this wizard will place you, then hand you the one behavioral change that moves you to the next stage.</p>
+    <div class="card">
+      <div class="row spread">
+        <div>
+          <div style="font-size:18px;font-weight:680">8 honest questions · ~2 minutes</div>
+          <div class="meta">
+            <span><b>Diagnoses</b> your current stage</span>
+            <span><b>Explains</b> what's happening psychologically</span>
+            <span><b>Gives</b> concrete next-stage action items</span>
+          </div>
+        </div>
+      </div>
+      <div class="nav" style="justify-content:flex-start">
+        <button class="btn btn-primary" onclick="start()">Find my stage →</button>
+      </div>
+    </div>
+    <p class="foot">Based on <em>"The 7 Stages Mark Douglas Said Every Trader Goes Through Before Finally Winning."</em><br>
+    Your ego will resist the honest answer. Let it resist &mdash; the truth is more useful than comfort.</p>
+  </section>
+
+  <!-- ============ QUIZ ============ -->
+  <section id="quiz" class="hidden">
+    <div class="qcount" id="qcount">Question 1 of 8</div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="card">
+      <div class="qtext" id="qtext"></div>
+      <div class="opts" id="opts"></div>
+      <div class="nav">
+        <button class="btn btn-ghost" id="backBtn" onclick="prev()">← Back</button>
+        <button class="btn btn-primary" id="nextBtn" onclick="next()" disabled>Next →</button>
+      </div>
+    </div>
+    <p class="foot">Place yourself where you are, not where you wish you were.</p>
+  </section>
+
+  <!-- ============ RESULT ============ -->
+  <section id="result" class="hidden">
+    <div class="card" id="resultCard"></div>
+    <div class="row center" style="margin-top:22px">
+      <button class="btn btn-ghost" onclick="restart()">↺ Retake the assessment</button>
+      <button class="btn btn-primary" onclick="window.print()">🖨 Save / print my result</button>
+    </div>
+    <p class="foot">You are not stuck. You never were. You just didn't have the map. Now you do &mdash; keep walking.</p>
+  </section>
+
+</div>
+
+<script>
+/* ---------------- STAGE DATA ---------------- */
+const STAGES = {
+  1:{ name:"Blissful Ignorance",
+      tag:"“I can do this. How hard can it be?”",
+      where:[
+        "You’ve just discovered trading and something inside you lit up. You opened an account, funded it, and started placing trades on gut feeling and excitement.",
+        "You may even be making money — but not because you know what you’re doing. The market is random enough that beginners win by accident. You have no concept of risk management, probability, or rules."
+      ],
+      trapH:"The trap",
+      trap:"Those early wins are poison — they confirm the story “I have natural talent.” You’re a passenger on a roller coaster who thinks he’s driving. This stage ends the same way for everyone: a loss big enough to make you realize this is real money that can actually hurt you.",
+      next:2,
+      nextLine:"Grow up <i>before</i> the inevitable big loss bankrupts you. The healthy move is to build survival habits now.",
+      actions:[
+        "Cap risk at 1–2% of your account per trade — today, before the big loss finds you.",
+        "Accept in writing that your early wins were probably luck, not skill.",
+        "Start a trade journal: log every entry, exit, and the real reason behind it.",
+        "Learn the basics of probability and expectancy — one trade means nothing.",
+        "Trade smaller. Right now, survival is the only goal."
+      ],
+      tonight:"Set a hard max-loss-per-trade rule and commit to never exceeding it." },
+
+  2:{ name:"The Awakening",
+      tag:"“Wait — this can actually hurt me.”",
+      where:[
+        "You’ve been humbled by a real loss. The excitement is gone and in its place is fear, doubt, and confusion. Strategies that worked last week are failing this week.",
+        "You feel stupid, like everyone else figured this out except you. This is the most emotionally difficult stage of the journey — and where the majority of traders quit forever."
+      ],
+      trapH:"What you need to hear",
+      trap:"Nothing is wrong with you. This is the path. Every successful trader you admire sat exactly where you’re sitting and felt exactly what you feel. The only difference between those who make it and those who quit is the willingness to stay in the discomfort long enough to learn. You’re not failing — you’re waking up.",
+      next:3,
+      nextLine:"Don’t quit. Survive the awakening and channel the desperation into focused learning instead of panic.",
+      actions:[
+        "Decide right now that you will not quit — commit to a timeline measured in months, not days.",
+        "Cut your position size so you can survive long enough to actually learn.",
+        "Reframe your losses as tuition, not failure.",
+        "Pick ONE market and ONE strategy to study deeply — resist grabbing everything at once.",
+        "Separate your self-worth from your account balance."
+      ],
+      tonight:"Write “I am not failing, I am waking up” and commit to staying in the game one more month." },
+
+  3:{ name:"The Search",
+      tag:"“This is it. This is the one.” (again)",
+      where:[
+        "You’ve become a strategy collector — books, courses, YouTube, Discords, indicators, chart patterns. You’re hunting the holy grail: the one system that will finally make everything work.",
+        "Each new strategy gives a rush of hope, works for a few days, then stops — and you feel betrayed, abandon it, and go looking for the next one. Traders can stay here for years."
+      ],
+      trapH:"The cruel irony",
+      trap:"The strategy was never the problem. Many of the strategies you abandoned were perfectly good. Your inability to execute one consistently is the real problem. If your strategy has a defined edge and you’ve backtested it, it is already good enough. You don’t need a better strategy — you need the ability to execute the one you have.",
+      next:4,
+      nextLine:"3 → 4 is not about finding a better strategy. It’s about realizing you don’t need one.",
+      actions:[
+        "Impose a strategy freeze — stop downloading, buying, or testing anything new.",
+        "Choose ONE strategy with a defined edge and commit to it for a fixed sample (e.g. 100 trades).",
+        "Backtest it until you genuinely trust the edge — then stop second-guessing it.",
+        "For every losing trade, log whether the strategy failed or your execution failed. It’s almost always execution.",
+        "Accept the hardest truth in trading: the problem is you, not the system."
+      ],
+      tonight:"Pick your one strategy and close every other system you’re currently juggling." },
+
+  4:{ name:"Awareness",
+      tag:"“I know exactly what to do — so why can’t I do it?”",
+      where:[
+        "You’ve stopped searching — not because you found the perfect strategy, but because you finally realized the problem isn’t your system, it’s you. Most traders never reach this shift.",
+        "You understand probability. You know no single trade matters and your edge only plays out over a large sample. You can explain all of it clearly… and yet you still move stops, cut winners early, skip valid setups, and revenge trade. You feel like two different people."
+      ],
+      trapH:"Why knowing isn’t enough",
+      trap:"Understanding is a function of your rational mind; execution under pressure is a function of your emotional mind — and they operate independently. Knowing a loss is acceptable doesn’t make it feel acceptable. The gap between knowing and doing is the entire game. Your frustration is actually progress: you can only be frustrated because you’re now aware of the gap, and awareness always precedes change.",
+      next:5,
+      nextLine:"4 → 5 is not about understanding more psychology. It’s about writing your rules down and committing to follow them.",
+      actions:[
+        "Stop trying to think your way out of a behavioral problem — build structure instead.",
+        "Write non-negotiable rules for: risk per trade, valid setups, stop placement, target, when to stop trading, and what to do after a win and after a loss.",
+        "Make them rigid and specific — rules, not guidelines or suggestions.",
+        "Pre-commit: decide every execution choice <em>before</em> the market opens.",
+        "Reduce in-the-moment discretion to near zero while you build discipline."
+      ],
+      tonight:"Write your full rulebook on a single page and sign it." },
+
+  5:{ name:"The Rule Builder",
+      tag:"“Having rules is easy. Following them is hard.”",
+      where:[
+        "You’ve done what most traders never do: codified your knowledge into rigid, written, non-negotiable rules that govern every part of your trading.",
+        "But you follow them inconsistently — disciplined some days, falling apart others. You might follow them all week, then blow up on one bad afternoon. Every broken rule lands as a sting of self-disappointment."
+      ],
+      trapH:"Why the inconsistency is good news",
+      trap:"You used to break rules without even noticing. Now you break them and it bothers you — which means the rules have become part of your identity. That sting of self-disappointment is your brain building a negative association with rule-breaking, and over time it becomes strong enough to override the impulse in real time. The discomfort is the very thing that will stop you.",
+      next:6,
+      nextLine:"5 → 6 is not about willpower. It’s about tracking your compliance until discipline becomes a habit.",
+      actions:[
+        "Score yourself every day on ONE metric — “Did I follow my rules?” — as a number out of 10.",
+        "Track that compliance score over time and watch it climb week over week, even when your balance doesn’t.",
+        "Redefine a “good day” as a COMPLIANT day, not a profitable one.",
+        "Review every rule break: what was the trigger, and what will you do differently next time?",
+        "Treat following the rules as non-negotiable — this is the threshold most traders never cross."
+      ],
+      tonight:"Create a compliance tracker and give today an honest score out of 10." },
+
+  6:{ name:"Consistent Execution",
+      tag:"“Where’s the thrill? …Is this really it?”",
+      where:[
+        "You follow your rules consistently — not perfectly, but most days you execute the plan, follow your criteria, and accept most losses without drama. The occasional slip is now the exception, not the norm.",
+        "Your account reflects it: not explosive growth, but steady, boring, incremental progress. And here’s the paradox — instead of feeling confident and validated, you feel almost nothing. You feel bored."
+      ],
+      trapH:"That boredom is the goal",
+      trap:"The thrill and the rush were never signs of good trading — they were signs of gambling, your emotional brain hijacking your decisions. The absence of emotion isn’t emptiness; it’s freedom: the freedom to execute without your survival instincts screaming at you to do something different. If trading feels boring, you are doing it right.",
+      next:7,
+      nextLine:"6 → 7 is repetition. Enough disciplined reps and execution stops being a battle and becomes automatic.",
+      actions:[
+        "Keep executing — sheer volume of disciplined reps is what internalizes the behavior.",
+        "Stop celebrating wins and mourning losses; treat every outcome identically.",
+        "Let the routine become so automatic you no longer have to talk yourself into discipline.",
+        "Protect the boredom — resist the urge to add complexity or “spice it up.”",
+        "Trust that your results now come from removing yourself, not from a better strategy."
+      ],
+      tonight:"Notice the boredom tonight and label it for what it is: proof you’ve arrived." },
+
+  7:{ name:"Unconscious Competence",
+      tag:"“My rules aren’t something I follow — they’re something I am.”",
+      where:[
+        "You don’t think about following your rules anymore — you just follow them, the way you don’t think about how to drive a car. The mechanics are internalized so deeply they’re automatic.",
+        "Execution is no longer a battle between your rational and emotional mind; the two have merged. You recognize setups without conscious analysis, size positions without anxiety, place trades without hesitation, and accept losses without narrative. Discipline is your default state."
+      ],
+      trapH:"What you’ve actually achieved",
+      trap:"Your results improved not because you found a better strategy or the market started cooperating, but because you removed every psychological obstacle between you and your edge. You got out of your own way. You’ve mastered yourself — and that quiet, boring, unshakable discipline is worth more than any single trade, month, or year. Nobody can take it from you.",
+      next:null,
+      nextLine:"This is mastery. There’s no next stage to chase — the work now is protecting what you’ve built.",
+      actions:[
+        "Review your rules periodically so they don’t silently drift over time.",
+        "Watch for complacency and “creativity creep” that quietly re-introduces ego.",
+        "Scale your size only as fast as your psychology stays automatic.",
+        "Teach or journal your process — it deepens the internalization.",
+        "Remember: not the market, not a losing streak, not anyone can take this mastery from you. Keep walking."
+      ],
+      tonight:"Write down the discipline that got you here, so you never drift away from it." }
+};
+
+/* ---------------- QUESTIONS ---------------- */
+/* each option maps to the stage it signals */
+const QUESTIONS = [
+  { q:"Which sentence best describes how trading feels to you right now?",
+    o:[
+      ["Excited and confident — I’m sure this is my ticket to financial freedom.",1],
+      ["Shaken and fearful — a real loss humbled me and the thrill is gone.",2],
+      ["Restless and hopeful — I’m always hunting for the next, better system.",3],
+      ["Frustrated — I know exactly what to do but can’t make myself do it.",4],
+      ["Determined — I’m grinding to follow my rules, day by day.",5],
+      ["Calm, almost bored — I just execute and move on.",6],
+      ["Neutral and effortless — discipline is just who I am now.",7],
+    ]},
+  { q:"What is your relationship with trading strategies?",
+    o:[
+      ["I don’t really have one — I trade on gut feeling and excitement.",1],
+      ["My strategy stopped working and now I feel completely lost.",2],
+      ["I switch strategies every few days or weeks, chasing the holy grail.",3],
+      ["I have one I trust; my whole problem is following it.",4],
+      ["I’ve codified my approach into rigid written rules.",5],
+      ["I follow one defined plan consistently, with only rare slips.",6],
+      ["I recognize my setups and execute without conscious analysis.",7],
+    ]},
+  { q:"Do you have written trading rules — and do you follow them?",
+    o:[
+      ["Rules? I just place trades.",1],
+      ["I had some, but the losses blew right through them.",2],
+      ["My rules keep changing every time I adopt a new system.",3],
+      ["I know what my rules should be but haven’t actually committed them.",4],
+      ["I have rigid written rules, but I break them fairly often.",5],
+      ["I follow my written rules most days.",6],
+      ["My rules are automatic — following them takes no effort.",7],
+    ]},
+  { q:"How do you typically react to a losing trade?",
+    o:[
+      ["I shrug it off — I barely register the risk.",1],
+      ["I’m devastated and tempted to quit altogether.",2],
+      ["I blame the strategy and go looking for a new one.",3],
+      ["I know it’s fine, yet I revenge-trade or move my stop anyway.",4],
+      ["It stings most when I realize I broke one of my own rules.",5],
+      ["I accept it and move on — no drama.",6],
+      ["I accept it without any story or emotion at all.",7],
+    ]},
+  { q:"What makes a trading day a “good day” for you?",
+    o:[
+      ["A day I made money and felt the rush.",1],
+      ["A day I simply didn’t lose more.",2],
+      ["A day I discovered a promising new setup or system.",3],
+      ["A day I understood the market a little better.",4],
+      ["A day I followed my rules — I’m starting to think this way.",5],
+      ["A compliant day — whether I made money is almost irrelevant.",6],
+      ["Every day feels the same; I just execute.",7],
+    ]},
+  { q:"How much of your trading is driven by emotion vs. process?",
+    o:[
+      ["Pure emotion — excitement and gut feeling run the show.",1],
+      ["Emotion is overwhelming me — fear and doubt dominate.",2],
+      ["Hope drives me — each new system feels like salvation.",3],
+      ["I see my emotions hijack me even though I know better.",4],
+      ["I’m actively fighting my emotions with structure and rules.",5],
+      ["Emotion is mostly quiet — it rarely affects my decisions.",6],
+      ["There’s no battle left — rational and emotional mind have merged.",7],
+    ]},
+  { q:"Do you track anything about your own behavior (not just P&L)?",
+    o:[
+      ["No — I only watch the money going up or down.",1],
+      ["No — I’m too overwhelmed to track anything right now.",3],
+      ["I track strategies’ results, but not my own discipline.",3],
+      ["I’ve realized I should track my behavior but haven’t started.",4],
+      ["I’m starting to score my rule-compliance each day.",5],
+      ["Yes — I score my compliance daily and it’s steadily climbing.",6],
+      ["I don’t need to — compliance is automatic and near-perfect.",7],
+    ]},
+  { q:"Be ruthlessly honest: where do you sense you actually are?",
+    o:[
+      ["Brand new and certain I’ll crush it.",1],
+      ["Recently humbled and questioning everything.",2],
+      ["Stuck cycling through strategies, never sticking with one.",3],
+      ["Aware it’s me, not the system — but unable to execute.",4],
+      ["Building discipline with rules I follow inconsistently.",5],
+      ["Consistent, disciplined, and a little bored by it.",6],
+      ["Self-mastered — discipline is simply my default.",7],
+    ]},
+];
+
+/* ---------------- STATE & ENGINE ---------------- */
+let cur = 0;
+const answers = new Array(QUESTIONS.length).fill(null);
+
+function start(){ show('quiz'); cur=0; render(); }
+function show(id){ ['intro','quiz','result'].forEach(s=>document.getElementById(s).classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); window.scrollTo({top:0,behavior:'smooth'}); }
+
+function render(){
+  const Q = QUESTIONS[cur];
+  document.getElementById('qcount').textContent = `Question ${cur+1} of ${QUESTIONS.length}`;
+  document.getElementById('bar').style.width = `${(cur/(QUESTIONS.length))*100}%`;
+  document.getElementById('qtext').textContent = Q.q;
+  const wrap = document.getElementById('opts'); wrap.innerHTML='';
+  Q.o.forEach((opt,i)=>{
+    const b=document.createElement('button');
+    b.className='opt'+(answers[cur]===i?' sel':'');
+    b.innerHTML=`<span class="dot"></span><span>${opt[0]}</span>`;
+    b.onclick=()=>{ answers[cur]=i; render(); };
+    wrap.appendChild(b);
+  });
+  document.getElementById('backBtn').style.visibility = cur===0?'hidden':'visible';
+  const nb=document.getElementById('nextBtn');
+  nb.disabled = answers[cur]===null;
+  nb.textContent = cur===QUESTIONS.length-1 ? 'See my stage →' : 'Next →';
+}
+function next(){ if(answers[cur]===null) return; if(cur<QUESTIONS.length-1){cur++;render();window.scrollTo({top:0,behavior:'smooth'});} else finish(); }
+function prev(){ if(cur>0){cur--;render();window.scrollTo({top:0,behavior:'smooth'});} }
+
+function finish(){
+  // Tally how many answers point to each stage.
+  const tally={1:0,2:0,3:0,4:0,5:0,6:0,7:0};
+  answers.forEach((ai,qi)=>{ const st=QUESTIONS[qi].o[ai][1]; tally[st]++; });
+
+  // The 7 stages are a strict, non-skippable ladder, so we do NOT average mixed
+  // signals. Instead we anchor to the WEAKEST LINK: the lowest stage where the
+  // trader still shows a *repeated* active struggle. An unresolved earlier
+  // struggle is a binding constraint — it caps your real stage no matter how
+  // many higher-stage habits you've also built.
+  //
+  // SUPPORT threshold = 2: a single stray answer is treated as self-report noise
+  // (Douglas's "the occasional slip is the exception, not the norm"); it takes at
+  // least two signals for a stage's struggle to count as genuinely present.
+  const SUPPORT = 2;
+  const supported = [];           // stages with >=2 answers, low -> high
+  const present   = [];           // every stage that got any answer
+  for(let s=1;s<=7;s++){ if(tally[s]>0) present.push(s); if(tally[s]>=SUPPORT) supported.push(s); }
+
+  let stageNum;
+  if(supported.length){
+    stageNum = supported[0];      // lowest supported stage = the binding constraint
+  } else {
+    // Fully scattered (no stage repeats) — fall back to the median stage.
+    const arr = answers.map((ai,qi)=>QUESTIONS[qi].o[ai][1]).sort((a,b)=>a-b);
+    stageNum = arr[Math.floor(arr.length/2)];
+  }
+
+  // Diagnostics for the "why this stage" explainer when answers were mixed.
+  const lo = present[0], hi = present[present.length-1];
+  const higher = supported.filter(s=>s>stageNum);          // higher-stage glimpses with real support
+  const mixed  = supported.length>1 || (hi-lo)>=2;
+  const wide   = (hi-lo)>=3;                                 // unusually contradictory self-report
+
+  renderResult(stageNum, {tally, mixed, wide, higher, lo, hi});
+  show('result');
+}
+
+function renderResult(stageNum, diag){
+  const S=STAGES[stageNum];
+  // ladder
+  let ladder='<div class="ladder">';
+  for(let i=1;i<=7;i++){
+    const cls = i<stageNum?'done':(i===stageNum?'current':'');
+    const mark = i<stageNum?'✓':i;
+    ladder+=`<div class="step ${cls}"><span class="connector"></span><span class="ring">${mark}</span><span class="lbl">Stage ${i} &middot; ${STAGES[i].name}</span></div>`;
+  }
+  ladder+='</div>';
+
+  let where=S.where.map(p=>`<p>${p}</p>`).join('');
+  let actions=S.actions.map(a=>`<li><span class="chk">✓</span><span>${a}</span></li>`).join('');
+
+  // "Why this stage" — shown only when answers spanned more than one stage.
+  let whyBlock='';
+  if(diag && diag.mixed){
+    const span = (diag.lo===diag.hi) ? `Stage ${diag.lo}`
+                                      : `Stage ${diag.lo} through Stage ${diag.hi}`;
+    let glimpse='';
+    if(diag.higher && diag.higher.length){
+      const names = diag.higher.map(s=>`Stage ${s} &middot; ${STAGES[s].name}`).join(' and ');
+      glimpse = ` You also showed genuine signals of <b>${names}</b> — that’s real progress, or a glimpse of where you’re heading. But those higher habits only become your <em>default</em> once the Stage ${stageNum} struggle is resolved; until then, the earlier struggle is what caps you.`;
+    }
+    const wideNote = diag.wide
+      ? ` <span style="color:var(--warn)">Your answers were unusually spread out — if that doesn’t feel right, retake it and answer for what you <em>actually</em> do, not what you know you <em>should</em> do.</span>`
+      : '';
+    whyBlock = `<div class="section-h">Why Stage ${stageNum}? &mdash; your answers were mixed</div>
+      <div class="panel why"><p>Your responses spanned ${span}. This path is sequential and can’t be skipped, so we don’t average mixed answers — we anchor you to the <b>lowest stage where you still show a repeated, active struggle</b>. An unresolved earlier struggle is a binding constraint: it sets your real stage no matter how many advanced habits you’ve also built.${glimpse}${wideNote}</p></div>`;
+  }
+
+  let nextBlock;
+  if(S.next){
+    nextBlock=`<div class="section-h">Your road to the next stage</div>
+      <div class="nextbox">
+        <div class="to">Next up &rarr; <b>Stage ${S.next} &middot; ${STAGES[S.next].name}</b></div>
+        <p style="margin-top:8px;color:#cdd6e6">${S.nextLine}</p>
+        <ul class="actions">${actions}</ul>
+      </div>`;
+  } else {
+    nextBlock=`<div class="section-h">Protecting your mastery</div>
+      <div class="nextbox">
+        <div class="to"><b>You’ve reached the final stage.</b></div>
+        <p style="margin-top:8px;color:#cdd6e6">${S.nextLine}</p>
+        <ul class="actions">${actions}</ul>
+      </div>`;
+  }
+
+  document.getElementById('resultCard').innerHTML = `
+    <div class="stagebig">Your stage — ${stageNum} of 7</div>
+    <div class="stagename"><span class="n">Stage ${stageNum}.</span> ${S.name}</div>
+    <div class="tagline">${S.tag}</div>
+    ${ladder}
+    ${whyBlock}
+    <div class="section-h">Where you are</div>
+    <div class="panel where">${where}</div>
+    <div class="section-h">${S.trapH}</div>
+    <div class="panel trap"><p>${S.trap}</p></div>
+    ${nextBlock}
+    <div class="tonight">
+      <div class="k">Do this one thing tonight</div>
+      <p>${S.tonight}</p>
+    </div>
+    <div class="quote">“You don’t move forward by acquiring more knowledge. You move forward by changing your behavior.”</div>
+  `;
+}
+
+function restart(){ answers.fill(null); cur=0; show('intro'); }
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "PageVisit",
+  "type": "object",
+  "description": "First-party page-visit log. One row per unique visitor per day (deduped client-side). Distinct visitor_id per visit_date = Unique Daily Visitors.",
+  "properties": {
+    "page": {
+      "type": "string",
+      "description": "Page identifier, e.g. 'TraderStages'."
+    },
+    "visitor_id": {
+      "type": "string",
+      "description": "Anonymous per-browser UUID stored in localStorage (no PII, no login)."
+    },
+    "visit_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the visit in YYYY-MM-DD."
+    },
+    "referrer": {
+      "type": "string",
+      "description": "document.referrer at load time, or 'direct'."
+    }
+  },
+  "required": ["page", "visitor_id", "visit_date"],
+  "rls": {
+    "_comment": "IMPORTANT: this page is viewed logged-out, so anonymous visitors must be allowed to CREATE rows. In the base44 entity's permissions/RLS, set: create = public (anyone). Keep read restricted to admins/owners so the raw log isn't public. If base44 will not allow anonymous create, expose a public backend function (e.g. logPageVisit) that writes with a service role and call that from logFirstPartyVisit() instead.",
+    "write": {
+      "create": "public"
+    },
+    "read": {
+      "list": "admin",
+      "get": "admin"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Host at https://YOURDOMAIN/robots.txt
+# Replace optionwheelpro.com with your real public domain.
+
+User-agent: *
+Allow: /
+
+# Keep the private analytics dashboard out of search results
+Disallow: /VisitStats
+
+Sitemap: https://optionwheelpro.com/sitemap.xml
