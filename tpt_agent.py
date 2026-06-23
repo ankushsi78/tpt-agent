@@ -133,10 +133,8 @@ LEAPS_MIN_OI            = int(os.getenv("LEAPS_MIN_OI", "50"))
 # LEAPS dip-buy hard filter: price must be within this % of the lower Bollinger
 # Band (mean-reversion entry — buy quality names that have pulled back).
 LEAPS_BB_LOWER_PCT      = float(os.getenv("LEAPS_BB_LOWER_PCT", "5.0"))
-# VIX gate: LEAPS enabled when VIX ≤ 18 (calm) OR VIX ≥ 21 (fear/opportunity)
-# Zone 18–21 excluded — moderate stress where IV is neither cheap nor justified
-LEAPS_VIX_CALM_MAX      = float(os.getenv("LEAPS_VIX_CALM_MAX", "18"))   # VIX gate: calm ceiling
-LEAPS_VIX_FEAR_MIN      = float(os.getenv("LEAPS_VIX_FEAR_MIN", "21"))   # VIX gate: fear floor
+# VIX gate: LEAPS enabled when VIX > 15 (enough vol for the dip-buy thesis)
+LEAPS_VIX_MIN           = float(os.getenv("LEAPS_VIX_MIN", "15"))   # VIX gate: minimum
 
 # — Position management —
 CSP_CLOSE_PREMIUM_PCT   = 0.50   # close CSP when 50% of premium captured
@@ -1418,7 +1416,7 @@ def post_run_summary(opening_info: dict, vix: float, deploy_pct: float,
 
 
 def post_leaps_ideas(leaps_trades: list[dict], vix: float, vix_ok: bool):
-    gate_desc = f"≤ {LEAPS_VIX_CALM_MAX:.0f} or ≥ {LEAPS_VIX_FEAR_MIN:.0f}"
+    gate_desc = f"VIX > {LEAPS_VIX_MIN:.0f}"
     vix_str = (
         f"VIX = {vix:.1f} — ✅ LEAPS gate OPEN (gate: {gate_desc})"
         if vix_ok else
@@ -1500,10 +1498,9 @@ def run():
     vix              = get_vix()
     deploy_pct       = vix_to_deploy_pct(vix)
     # CSP delta is now per-stock (BB-based) — no global delta_range_for_vix() needed
-    # LEAPS VIX gate: ON when VIX ≤ 18 (calm) OR VIX ≥ 21 (fear/opportunity)
-    # Zone 18–21 excluded — moderate stress, IV neither cheap nor justified
-    vix_ok_leaps     = (vix <= LEAPS_VIX_CALM_MAX) or (vix >= LEAPS_VIX_FEAR_MIN)
-    vix_gate_desc    = (f"VIX ≤ {LEAPS_VIX_CALM_MAX:.0f} or ≥ {LEAPS_VIX_FEAR_MIN:.0f}")
+    # LEAPS VIX gate: ON when VIX > 15 (enough vol for the dip-buy thesis)
+    vix_ok_leaps     = vix > LEAPS_VIX_MIN
+    vix_gate_desc    = (f"VIX > {LEAPS_VIX_MIN:.0f}")
     opening_info     = get_account_info()
     portfolio_value  = opening_info["portfolio_value"]
     log(f"  VIX={vix:.1f}  deploy={deploy_pct*100:.0f}%  portfolio=${portfolio_value:,.2f}")
@@ -1579,7 +1576,7 @@ def run():
             f"{[t['ticker'] for t in top_leaps]}")
     else:
         top_leaps = []
-        log(f"  VIX {vix:.1f} in excluded zone ({LEAPS_VIX_CALM_MAX:.0f}–{LEAPS_VIX_FEAR_MIN:.0f}) — skipping LEAPS")
+        log(f"  VIX {vix:.1f} ≤ {LEAPS_VIX_MIN:.0f} — too calm, skipping LEAPS")
 
     # ── Phase 7: Execute LEAPS ───────────────────────────────────────────────
     log("Phase 7: Execute LEAPS")

@@ -214,7 +214,7 @@ story.append(info_box(
     "(2) Never sell a CSP into an earnings window. "
     "(3) Size up only on high-conviction setups (score 5/5). "
     "(4) Close winners early — CSPs at 50% premium captured, LEAPS at +5% profit. "
-    "(5) VIX gates deployment amount; LEAPS gate is VIX ≤ 18 OR ≥ 21.", LIGHT_BLUE, MID_BLUE))
+    "(5) VIX gates deployment amount; LEAPS gate is VIX > 15.", LIGHT_BLUE, MID_BLUE))
 story.append(spacer(0.15))
 
 # Architecture table
@@ -283,7 +283,7 @@ phases = [
     (MID_BLUE,   "3", "Refresh Capital After Closes",       "Re-fetch account after any closes to get updated cash and buying power."),
     (GREY_DARK,  "4", "Load Tickers + Hard Filters",        "Pull approved stock list, fetch price history, apply 200 SMA and earnings hard filters."),
     (GREEN,      "5", "CSP Screening + Scoring",            "Score each stock on 5 technical signals, find best put contract, rank by score then ARR/Delta ratio."),
-    (PURPLE,     "6", "LEAPS Screening",                    "If VIX ≤ 18 or ≥ 21: keep names near the lower BB (dip), sort by proximity, find deep ITM call."),
+    (PURPLE,     "6", "LEAPS Screening",                    "If VIX > 15: keep names near the lower BB (dip), sort by proximity, find deep ITM call."),
     (PURPLE,     "7", "Execute LEAPS Trades",               "Top-ranked first, 1 contract per pick, until 15% portfolio budget exhausted."),
     (GREEN,      "8", "Execute CSP Trades",                 "Top-scored first, 1 contract per pick, until VIX-adjusted cash budget exhausted."),
     (MID_BLUE,   "9", "Post Discord Summary",               "Post run summary, open positions table, CSP summary table, LEAPS summary table."),
@@ -327,13 +327,12 @@ story.append(spacer(0.1))
 story.append(Paragraph("Budget Calculations", H2))
 story.append(bullet("<b>CSP Budget</b> = Cash × VIX deploy %"))
 story.append(bullet("<b>LEAPS Budget</b> = Portfolio Value × 15% − Current LEAPS Exposure  (never exceeds 15% of portfolio total)"))
-story.append(bullet("<b>LEAPS VIX Gate</b> = Screen and execute LEAPS when <b>VIX ≤ 18  OR  VIX ≥ 21</b>"))
+story.append(bullet("<b>LEAPS VIX Gate</b> = Screen and execute LEAPS when <b>VIX &gt; 15</b>"))
 story.append(spacer(0.05))
 story.append(info_box(
-    "<i>Rationale for LEAPS VIX gate (≤18 or ≥21):</i> VIX ≤ 18 = calm market, "
-    "stocks fairly valued — ideal LEAPS entry. VIX ≥ 21 = fear-driven selloff, "
-    "stocks oversold — excellent LEAPS entry at depressed prices. "
-    "Zone 18–21 excluded: moderate stress where IV is neither cheap nor justified.", LIGHT_PURPLE, PURPLE))
+    "<i>Rationale for LEAPS VIX gate (&gt; 15):</i> below 15 the market is too complacent — "
+    "stocks haven't pulled back, so the dip-buy thesis has nothing to act on. Above 15 there is "
+    "enough volatility for quality names to reach the lower Bollinger Band.", LIGHT_PURPLE, PURPLE))
 
 story.append(PageBreak())
 
@@ -550,9 +549,9 @@ story.append(PageBreak())
 story.append(section_header("8.  Phase 6 — LEAPS Screening", DARK_BLUE))
 story.append(spacer(0.1))
 story.append(info_box(
-    "<b>VIX Hard Gate:</b>  LEAPS screening runs ONLY when <b>VIX ≤ 18  OR  VIX ≥ 21</b>. "
-    "Zone 18–21 is excluded (moderate stress — IV inflated without directional clarity). "
-    "Outside both zones the entire LEAPS phase is skipped.", LIGHT_ORANGE, ORANGE))
+    "<b>VIX Hard Gate:</b>  LEAPS screening runs ONLY when <b>VIX &gt; 15</b>. "
+    "Below 15 the market is too calm for the dip-buy thesis, so the entire LEAPS "
+    "phase is skipped.", LIGHT_ORANGE, ORANGE))
 story.append(spacer(0.1))
 story.append(Paragraph(
     "Runs on the stock universe that passed the Phase 4 hard filters "
@@ -702,8 +701,7 @@ leaps_param_rows = [
     ["LEAPS_MIN_DELTA",         "0.70",      "Minimum call delta (lowered from 0.80)"],
     ["LEAPS_MAX_DELTA",         "0.85",      "Maximum call delta (lowered from 0.99)"],
     ["LEAPS_TARGET_DELTA",      "0.77",      "Target delta — pick contract closest to this (lowered from 0.85)"],
-    ["LEAPS_VIX_CALM_MAX",      "18",        "LEAPS enabled when VIX ≤ this (calm zone)"],
-    ["LEAPS_VIX_FEAR_MIN",      "21",        "LEAPS also enabled when VIX ≥ this (fear/opportunity zone)"],
+    ["LEAPS_VIX_MIN",           "15",        "LEAPS enabled only when VIX > this"],
     ["LEAPS_BB_LOWER_PCT",      "5%",        "Dip filter — price must be within this % of the lower Bollinger Band"],
     ["LEAPS_MIN_OI",            "50",        "Minimum OI (only enforced when OI > 0 from API)"],
     ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
@@ -767,7 +765,7 @@ story.append(spacer(0.1))
 
 flow = [
     ("START  6:35 AM PT trigger", DARK_BLUE),
-    ("Fetch VIX → determine deploy %; LEAPS gate: VIX ≤ 18 OR ≥ 21", MID_BLUE),
+    ("Fetch VIX → determine deploy %; LEAPS gate: VIX > 15", MID_BLUE),
     ("Fetch Tradier account: portfolio value, cash, option buying power", MID_BLUE),
     ("Fetch all open positions", MID_BLUE),
     ("─── POSITION MANAGEMENT ───", GREY_DARK),
@@ -796,7 +794,7 @@ flow = [
     ("    • Score: strike>50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
-    ("─── LEAPS SCREENING (parallel; only if VIX ≤ 18 OR ≥ 21) ───", PURPLE),
+    ("─── LEAPS SCREENING (parallel; only if VIX > 15) ───", PURPLE),
     ("For each stock passing hard filters:", PURPLE),
     ("    • DIP FILTER: skip unless price within 5% of lower BB (LEAPS_BB_LOWER_PCT)", RED),
     ("    • No scoring — survivors are all valid dip candidates", PURPLE),
