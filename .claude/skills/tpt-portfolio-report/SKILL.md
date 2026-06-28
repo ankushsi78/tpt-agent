@@ -11,20 +11,27 @@ cash-secured-put collateral and an account snapshot.
 
 ## How to run
 
-Run the bundled script from the skill directory:
+Run BOTH bundled scripts from the skill directory:
 
 ```bash
+# 1. Per-trade P&L + collateral + account snapshot (text)
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   /Users/ankushsinghal/Documents/Trading/.claude/skills/tpt-portfolio-report/report.py
+
+# 2. Daily equity series for the dashboard chart (JSON)
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  /Users/ankushsinghal/Documents/Trading/.claude/skills/tpt-portfolio-report/equity_series.py
 ```
 
-The script reads Tradier credentials from `Trading/.env`
+Both scripts read Tradier credentials from `Trading/.env`
 (`TRADIER_TOKEN`, `TRADIER_ACCOUNT_ID`, `TRADIER_BASE_URL`) — nothing is
-hardcoded, so it works as long as that file is present.
+hardcoded, so they work as long as that file is present.
 
 ## Presenting the results
 
-After running the script, present the output to the user as clean markdown:
+Always produce BOTH the markdown tables AND the visual dashboard.
+
+### A. Markdown tables (from report.py output)
 
 1. **Realized (Closed)** table — Trade · Qty · Opened · Closed · P&L · Return
 2. **Unrealized (Open)** table — Trade · Type · Qty · Opened · Entry · Current · P&L · Return
@@ -34,14 +41,27 @@ After running the script, present the output to the user as clean markdown:
 Use 🟢 for realized and 🔵 for unrealized section headers. Round currency to
 cents and returns to one decimal. Bold the P&L figures.
 
-## Optional: balance-over-time chart
+### B. Visual dashboard (always include — use the visualize show_widget tool)
 
-If the user also asks for an equity curve / balance over time, extract the
-daily equity from the bot log (`Trading/tpt_agent.log`) — each run logs a line
-like `Account: equity=$X` — taking the last reading per calendar day (skip
-`$0.00` abort lines). The Tradier sandbox does not expose a transaction-history
-endpoint, so the log is the source for the daily series. Render it with the
-visualization tool as a line chart vs a $100,000 starting-capital reference.
+Feed `equity_series.py`'s JSON into a single widget containing:
+
+1. **Three metric cards** across the top:
+   - Starting capital → `starting_capital` (e.g. $100,000)
+   - Current equity → `current_equity`
+   - Total return → `total_return_pct` (color green if ≥ 0 via `--color-text-success`, red `--color-text-danger` if < 0)
+2. **Line chart** of the daily equity curve (`points[].date` / `points[].value`)
+   with a dashed reference line at `starting_capital`. Use Chart.js (per the
+   visualize chart guidance): green line `#1D9E75` with light fill when the
+   curve is net positive, red `#E24B4A` when net negative; dashed gray
+   reference line; y-axis padded ~$1k beyond the data range; `autoSkip:false`
+   x-axis labels; tooltip formats as `$xx,xxx.xx`.
+3. A small **legend** (Account equity / Starting capital) below the chart.
+
+Then below the widget, restate the Summary (Realized / Unrealized / Combined)
+as a short markdown table and a one-line "equity went $X → $Y (±Z%)" sentence.
+
+Keep all explanatory prose OUTSIDE the widget (in the chat response) — the
+widget holds only the metric cards + chart + legend.
 
 ## Notes
 
