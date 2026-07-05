@@ -54,6 +54,20 @@ If the user names a week/date (e.g. "the July 2nd expirations"), pass it as
 settle_expiry settles everything past due, and generate_report picks the most
 recent expiration date on or before today that has closed (WIN/LOSS) outcomes.
 
+**Step 3 — post the PDF to Discord.** After the PDF is verified (see
+"Presenting the results" below), post it to the free community channel:
+
+```bash
+python3 "/Users/ankushsinghal/Documents/Trading/.claude/skills/weekly-trade-ideas-analysis/post_to_discord.py"
+```
+
+It picks up the newest report in `reports/` and uploads it with a short
+message via the `DISCORD_FREE_WEBHOOK_URL` webhook from `Trading/.env`.
+Use `--pdf <path>` to post a specific file, `--message "..."` to override the
+text, or `--dry-run` to preview. Posting goes to the live community channel —
+run it only after the PDF has been visually verified, and skip it if the user
+asked for the report only.
+
 The PDF is written to `/Users/ankushsinghal/Documents/Trading/reports/`
 as `CSP_Wheel_Bot_Weekly_Report_<expiry>.pdf`. Override with `--out <dir>`.
 
@@ -85,3 +99,4 @@ After the script finishes:
    P&L; overall win rate and net realized P&L; and the top takeaway (which
    names are carrying the book, which name is dragging it).
 3. Link the PDF path so they can open/share it.
+4. Post the PDF to Discord (step 3 above) and confirm the post succeeded.
