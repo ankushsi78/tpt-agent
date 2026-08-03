@@ -549,6 +549,10 @@ story.append(PageBreak())
 story.append(section_header("8.  Phase 6 — LEAPS Screening", DARK_BLUE))
 story.append(spacer(0.1))
 story.append(info_box(
+    "<b>Currently DISABLED (LEAPS_ENABLED = false):</b>  the bot runs CSP only. "
+    "The logic below applies when LEAPS is re-enabled.", LIGHT_RED, RED))
+story.append(spacer(0.1))
+story.append(info_box(
     "<b>VIX Hard Gate:</b>  LEAPS screening runs ONLY when <b>VIX &gt; 15</b>. "
     "Below 15 the market is too calm for the dip-buy thesis, so the entire LEAPS "
     "phase is skipped.", LIGHT_ORANGE, ORANGE))
@@ -696,6 +700,7 @@ story.append(spacer(0.1))
 story.append(Paragraph("LEAPS Parameters", H2))
 leaps_param_rows = [
     ["Parameter",               "Default",   "Description"],
+    ["LEAPS_ENABLED",           "false",     "Master switch — LEAPS OFF (CSP only). Set true to re-enable the LEAPS leg."],
     ["LEAPS_MIN_DTE",           "365 days",  "Minimum DTE for LEAPS contracts"],
     ["LEAPS_MAX_DTE",           "730 days",  "Maximum DTE for LEAPS contracts (1–2 years)"],
     ["LEAPS_MIN_DELTA",         "0.70",      "Minimum call delta (lowered from 0.80)"],

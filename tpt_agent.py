@@ -133,6 +133,8 @@ LEAPS_MIN_OI            = int(os.getenv("LEAPS_MIN_OI", "50"))
 # LEAPS dip-buy hard filter: price must be within this % of the lower Bollinger
 # Band (mean-reversion entry — buy quality names that have pulled back).
 LEAPS_BB_LOWER_PCT      = float(os.getenv("LEAPS_BB_LOWER_PCT", "5.0"))
+# Master switch: LEAPS disabled — bot runs CSP only. Set LEAPS_ENABLED=true to re-enable.
+LEAPS_ENABLED           = os.getenv("LEAPS_ENABLED", "false").lower() == "true"
 # VIX gate: LEAPS enabled when VIX > 15 (enough vol for the dip-buy thesis)
 LEAPS_VIX_MIN           = float(os.getenv("LEAPS_VIX_MIN", "15"))   # VIX gate: minimum
 
@@ -1498,9 +1500,9 @@ def run():
     vix              = get_vix()
     deploy_pct       = vix_to_deploy_pct(vix)
     # CSP delta is now per-stock (BB-based) — no global delta_range_for_vix() needed
-    # LEAPS VIX gate: ON when VIX > 15 (enough vol for the dip-buy thesis)
-    vix_ok_leaps     = vix > LEAPS_VIX_MIN
-    vix_gate_desc    = (f"VIX > {LEAPS_VIX_MIN:.0f}")
+    # LEAPS: disabled via LEAPS_ENABLED master switch; VIX gate (>15) applies only when enabled.
+    vix_ok_leaps     = LEAPS_ENABLED and (vix > LEAPS_VIX_MIN)
+    vix_gate_desc    = (f"VIX > {LEAPS_VIX_MIN:.0f}") if LEAPS_ENABLED else "LEAPS_ENABLED=false"
     opening_info     = get_account_info()
     portfolio_value  = opening_info["portfolio_value"]
     log(f"  VIX={vix:.1f}  deploy={deploy_pct*100:.0f}%  portfolio=${portfolio_value:,.2f}")
@@ -1576,7 +1578,10 @@ def run():
             f"{[t['ticker'] for t in top_leaps]}")
     else:
         top_leaps = []
-        log(f"  VIX {vix:.1f} ≤ {LEAPS_VIX_MIN:.0f} — too calm, skipping LEAPS")
+        if not LEAPS_ENABLED:
+            log("  LEAPS disabled (LEAPS_ENABLED=false) — CSP only")
+        else:
+            log(f"  VIX {vix:.1f} ≤ {LEAPS_VIX_MIN:.0f} — too calm, skipping LEAPS")
 
     # ── Phase 7: Execute LEAPS ───────────────────────────────────────────────
     log("Phase 7: Execute LEAPS")
@@ -1610,7 +1615,8 @@ def run():
 
     post_run_summary(opening_info, vix, deploy_pct, closed_actions,
                      csp_executed, leaps_executed, closing_info, enriched)
-    post_leaps_ideas(top_leaps, vix, vix_ok_leaps)
+    if LEAPS_ENABLED:
+        post_leaps_ideas(top_leaps, vix, vix_ok_leaps)
     post_csp_ideas(top_csps)
 
     log("=" * 65)
