@@ -45,10 +45,12 @@ cents and returns to one decimal. Bold the P&L figures.
 
 Feed `equity_series.py`'s JSON into a single widget containing:
 
-1. **Three metric cards** across the top:
-   - Starting capital → `starting_capital` (e.g. $100,000)
-   - Current equity → `current_equity`
+1. **Four metric cards** across the top:
+   - Starting capital → `starting_capital`, with `start_date` as a small subtitle (e.g. "since June 4, 2026")
+   - Current equity → `current_equity`, with `as_of_date` as a subtitle
    - Total return → `total_return_pct` (color green if ≥ 0 via `--color-text-success`, red `--color-text-danger` if < 0)
+   - Projected annual balance → `projected_annual_balance`, with `annualized_return_pct` as a subtitle
+     (e.g. "+14.1% annualized"), same green/red coloring as total return
 2. **Line chart** of the daily equity curve (`points[].date` / `points[].value`)
    with a dashed reference line at `starting_capital`. Use Chart.js (per the
    visualize chart guidance): green line `#1D9E75` with light fill when the
@@ -59,6 +61,11 @@ Feed `equity_series.py`'s JSON into a single widget containing:
 
 Then below the widget, restate the Summary (Realized / Unrealized / Combined)
 as a short markdown table and a one-line "equity went $X → $Y (±Z%)" sentence.
+
+The **projected annual balance** is a naive compounded annualization of the
+return-to-date (`starting_capital × (current/starting)^(365/days_elapsed)`).
+Always caveat it as a rough extrapolation of a short, volatile sample — not a
+forecast.
 
 Keep all explanatory prose OUTSIDE the widget (in the chat response) — the
 widget holds only the metric cards + chart + legend.

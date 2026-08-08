@@ -71,15 +71,47 @@ if TOKEN and ACCOUNT_ID:
     except Exception:
         pass
 
+iso_dates = list(day_equity.keys())
 points = [{"date": month_day(d), "value": round(v, 2)} for d, v in day_equity.items()]
 if current_equity is None and points:
     current_equity = points[-1]["value"]
 
 ret = ((current_equity - STARTING_CAPITAL) / STARTING_CAPITAL * 100) if current_equity else 0.0
 
+# ── Start date + annualized projection ────────────────────────────────────────
+from datetime import date as _date
+
+
+def _pretty(iso: str) -> str:
+    y, m, d = iso.split("-")
+    months = ["", "January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+    return f"{months[int(m)]} {int(d)}, {y}"
+
+
+start_iso = iso_dates[0] if iso_dates else None
+last_iso = iso_dates[-1] if iso_dates else None
+days_elapsed = 0
+if start_iso and last_iso:
+    days_elapsed = (_date.fromisoformat(last_iso) - _date.fromisoformat(start_iso)).days
+
+# Compounded annualization of the return-to-date, applied to starting capital
+annualized_return_pct = None
+projected_annual_balance = None
+if current_equity and days_elapsed > 0 and STARTING_CAPITAL > 0:
+    growth = current_equity / STARTING_CAPITAL
+    ann_factor = growth ** (365.0 / days_elapsed)
+    annualized_return_pct = round((ann_factor - 1) * 100, 2)
+    projected_annual_balance = round(STARTING_CAPITAL * ann_factor, 2)
+
 print(json.dumps({
     "starting_capital": STARTING_CAPITAL,
+    "start_date": _pretty(start_iso) if start_iso else None,
     "current_equity": round(current_equity, 2) if current_equity else None,
+    "as_of_date": _pretty(last_iso) if last_iso else None,
+    "days_elapsed": days_elapsed,
     "total_return_pct": round(ret, 2),
+    "annualized_return_pct": annualized_return_pct,
+    "projected_annual_balance": projected_annual_balance,
     "points": points,
 }, indent=2))
