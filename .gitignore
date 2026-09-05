@@ -50,3 +50,6 @@ data/
 
 # launchd plist with live secrets — only the .template is committed
 com.ankushsinghal.tptagent.plist
+
+# Schwab OAuth token (grants account access — never commit)
+schwab_token.json
