@@ -62,7 +62,10 @@ Produce BOTH a markdown summary AND the visual dashboard.
 1. **Account snapshot** — NLV, money-market reserve, cash balance, long market
    value, short option value, buying power, total unrealized P&L.
 2. **Short puts / CSP collateral** — Underlying · Strike · Expiry · Qty ·
-   Collateral · Unreal P&L, sorted by collateral, with a TOTAL row.
+   Collateral · Unreal P&L · P&L%prem (P&L / premium collected) · ROC%
+   (P&L / collateral) · ARR (remaining annualized return if held to expiry =
+   |mkt| / collateral × 365/DTE; "N/A" when the position is in a loss or
+   expires today). Sorted best→worst P&L%prem, with a TOTAL row.
 3. **Long calls (LEAPS) / short calls / long puts / equities** as needed —
    highlight the biggest unrealized winners and losers.
 4. **Allocation by ticker** — Ticker · $ · % of NLV, largest first, with 🚩 on

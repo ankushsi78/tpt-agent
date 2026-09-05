@@ -126,21 +126,32 @@ def print_report(d):
                   f"{_money(e['mkt']):>14}{_money(e['upl']):>14}")
 
     if d["short_puts"]:
+        today = dt.date.today()
         print("\nSHORT PUTS (Cash-Secured Puts)")
         print(f"  {'Underlying':<10}{'Strike':>8}{'Exp':>12}{'Qty':>5}"
-              f"{'Collateral':>12}{'Unreal P&L':>12}{'P&L%prem':>10}{'ROC%':>8}")
+              f"{'Collateral':>12}{'Unreal P&L':>12}{'P&L%prem':>10}"
+              f"{'ROC%':>8}{'ARR':>9}")
         tot_coll = tot_prem = tot_upl_sp = 0.0
-        # P&L%prem = unrealized P&L / premium collected (avg*100*qty);
-        # ROC% = unrealized P&L / collateral secured.
+        # P&L%prem = unrealized P&L / premium collected (avg*100*qty)
+        # ROC%     = unrealized P&L / collateral secured
+        # ARR      = remaining annualized return if held to expiry:
+        #            (remaining premium / collateral) * 365/DTE.
+        #            Remaining premium = current buyback value = |market value|.
+        #            N/A when the position is in a loss or expires today.
         for p in sorted(d["short_puts"],
                         key=lambda x: -x["upl"] / (x["avg"] * 100 * abs(x["qty"]))):
             prem = p["avg"] * 100 * abs(p["qty"])
             total_upl += p["upl"]
             tot_coll += p["collateral"]; tot_prem += prem; tot_upl_sp += p["upl"]
+            dte = (dt.date.fromisoformat(p["expiry"]) - today).days
+            if p["upl"] < 0 or dte <= 0:
+                arr = "N/A"
+            else:
+                arr = f"{abs(p['mkt']) / p['collateral'] * 365 / dte * 100:.1f}%"
             print(f"  {p['underlying']:<10}{p['strike']:>8.1f}{p['expiry']:>12}"
                   f"{abs(p['qty']):>5.0f}{_money(p['collateral']):>12}"
                   f"{_money(p['upl']):>12}{p['upl']/prem*100:>9.1f}%"
-                  f"{p['upl']/p['collateral']*100:>7.2f}%")
+                  f"{p['upl']/p['collateral']*100:>7.2f}%{arr:>9}")
         print(f"  {'':<10}{'':>8}{'':>12}{'TOTAL':>5}{_money(tot_coll):>12}"
               f"{_money(tot_upl_sp):>12}{tot_upl_sp/tot_prem*100:>9.1f}%")
 
