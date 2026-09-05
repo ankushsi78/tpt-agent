@@ -128,14 +128,21 @@ def print_report(d):
     if d["short_puts"]:
         print("\nSHORT PUTS (Cash-Secured Puts)")
         print(f"  {'Underlying':<10}{'Strike':>8}{'Exp':>12}{'Qty':>5}"
-              f"{'Collateral':>14}{'Unreal P&L':>14}")
-        tot_coll = 0.0
-        for p in sorted(d["short_puts"], key=lambda x: -x["collateral"]):
-            total_upl += p["upl"]; tot_coll += p["collateral"]
+              f"{'Collateral':>12}{'Unreal P&L':>12}{'P&L%prem':>10}{'ROC%':>8}")
+        tot_coll = tot_prem = tot_upl_sp = 0.0
+        # P&L%prem = unrealized P&L / premium collected (avg*100*qty);
+        # ROC% = unrealized P&L / collateral secured.
+        for p in sorted(d["short_puts"],
+                        key=lambda x: -x["upl"] / (x["avg"] * 100 * abs(x["qty"]))):
+            prem = p["avg"] * 100 * abs(p["qty"])
+            total_upl += p["upl"]
+            tot_coll += p["collateral"]; tot_prem += prem; tot_upl_sp += p["upl"]
             print(f"  {p['underlying']:<10}{p['strike']:>8.1f}{p['expiry']:>12}"
-                  f"{abs(p['qty']):>5.0f}{_money(p['collateral']):>14}"
-                  f"{_money(p['upl']):>14}")
-        print(f"  {'':<10}{'':>8}{'':>12}{'TOTAL':>5}{_money(tot_coll):>14}")
+                  f"{abs(p['qty']):>5.0f}{_money(p['collateral']):>12}"
+                  f"{_money(p['upl']):>12}{p['upl']/prem*100:>9.1f}%"
+                  f"{p['upl']/p['collateral']*100:>7.2f}%")
+        print(f"  {'':<10}{'':>8}{'':>12}{'TOTAL':>5}{_money(tot_coll):>12}"
+              f"{_money(tot_upl_sp):>12}{tot_upl_sp/tot_prem*100:>9.1f}%")
 
     if d["short_calls"]:
         print("\nSHORT CALLS")
