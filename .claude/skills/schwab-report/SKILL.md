@@ -78,9 +78,15 @@ summaries), percentages to 1–2 decimals.
 
 One widget:
 
-1. **Five metric cards** across the top: NLV; cash allocation ($ + %); balance
-   growth YTD (green/red); realized gain YTD ($ + % of BoY, green/red);
-   realized gain MTD ($ + %, labeled preliminary).
+0. **Realized MTD gains + target meter** (top, full width): realized gain MTD
+   ($ and % of BoM) with a horizontal progress meter toward the monthly target
+   (`metrics.monthly_target_pct`, default 4% of BoM). Fill = realized MTD % /
+   target %; label "N% of 4% monthly target" and the target dollar
+   (target% × BoM NLV). Always note it's preliminary early in the month while
+   that week's expirations are unsettled. NOTE: the meter/MTD gain here is
+   REALIZED gains, not balance growth.
+1. **Four metric cards**: NLV; cash allocation ($ + %); balance growth YTD
+   (green/red); realized gain YTD ($ + % of BoY, green/red).
 2. **Horizontal bar chart** — allocation by ticker as % of NLV (top ~16–20
    rows). Bars over the flag threshold in red (`#e34948`), the rest blue
    (`#2a78d6`); a dashed red reference line at the flag % labeled "10% limit";

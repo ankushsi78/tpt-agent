@@ -223,9 +223,16 @@ def compute_metrics(d, anchors):
     boy = anchors["beginning_of_year"]["nlv"]
     bom = anchors["beginning_of_month"]["nlv"]
     rz = anchors["realized_ytd"]["net_gain"]
+    target_pct = anchors.get("monthly_target_pct", 4.0)
+    realized_mtd = reconstruct_realized_mtd()
+    realized_mtd_pct = realized_mtd / bom * 100
+    # Progress toward the monthly target is measured on REALIZED MTD gains.
+    mtd_target_progress = realized_mtd_pct / target_pct * 100 if target_pct else 0.0
 
     return {
         "nlv": nlv,
+        "monthly_target_pct": target_pct,
+        "mtd_target_progress_pct": mtd_target_progress,
         "cash_allocation": cash_alloc,
         "cash_allocation_pct": cash_alloc / nlv * 100,
         "committed": committed,
@@ -235,8 +242,8 @@ def compute_metrics(d, anchors):
         "growth_mtd_pct": (nlv - bom) / bom * 100,
         "realized_ytd": rz,
         "realized_ytd_pct_boy": rz / boy * 100,
-        "realized_mtd": reconstruct_realized_mtd(),
-        "realized_mtd_pct_bom": reconstruct_realized_mtd() / bom * 100,
+        "realized_mtd": realized_mtd,
+        "realized_mtd_pct_bom": realized_mtd_pct,
         "allocation": alloc_rows,
         "flag_pct": flag_pct,
     }
@@ -294,6 +301,8 @@ def print_metrics(m, anchors):
           f"  ({m['growth_ytd_pct']:+.2f}%)")
     print(f"     Balance growth MTD    : {_money(m['growth_mtd'])}"
           f"  ({m['growth_mtd_pct']:+.2f}%)")
+    print(f"     Realized MTD vs {m['monthly_target_pct']:.0f}% target: "
+          f"{m['mtd_target_progress_pct']:.0f}% of target")
     print(f"  4. Realized gain YTD     : {_money(m['realized_ytd'])}"
           f"  ({m['realized_ytd_pct_boy']:+.2f}% of BoY)  [Schwab official]")
     print(f"  5. Realized gain MTD     : {_money(m['realized_mtd'])}"

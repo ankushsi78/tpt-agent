@@ -16,5 +16,6 @@
     "source": "Schwab official Realized Gain/Loss report (Accounts > History > Realized G/L, Current year, include option contracts)"
   },
   "concentration_flag_pct": 10.0,
+  "monthly_target_pct": 4.0,
   "_note": "Beginning-period NLVs and the official realized YTD gain are provided by the account owner from Schwab statements/reports (the Trader API has no historical-balance or realized-G/L endpoint). Reconstructing realized P&L from the transactions API is unreliable because history only reaches back to 2025-12-05, truncating older lots. Update beginning_of_month and realized figures at the start of each new month / when the Schwab report changes."
 }
