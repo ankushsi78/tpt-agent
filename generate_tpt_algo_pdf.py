@@ -383,10 +383,10 @@ story.append(Paragraph("LEAPS Exit Rules — Long Calls", H2))
 
 leaps_exit_rows = [
     ["Rule", "Trigger", "P&L State", "Action"],
-    ["#1 — Profit Target",
-     "(Current − Avg Entry) / Avg Entry ≥ 5%",
+    ["#1 — Profit Target (+5%)",
+     "GTC SELL TO CLOSE at entry × 1.05, rested at open",
      "Profit",
-     "🤖 AUTO — SELL TO CLOSE"],
+     "🤖 GTC order fills on the book (Phase 2 auto-close = backstop)"],
     ["#2 — Stop-Loss",
      "(Current − Avg Entry) / Avg Entry ≤ −50%",
      "Loss",
@@ -573,7 +573,8 @@ story.append(Paragraph("LEAPS Hard Filters", H2))
 leaps_hf_rows = [
     ["Filter",                  "Logic",                         "Rationale"],
     ["Above 200-day SMA",       "Price &gt; SMA 200 (Phase 4)",  "Knife guard — long-term uptrend intact"],
-    ["RSI &lt; 65",             "RSI(14) &lt; 65 (Phase 4)",     "Not overbought"],
+    ["RSI &lt; 65 (shared)",    "RSI(14) &lt; 65 (Phase 4)",     "Not overbought (applies to CSP too)"],
+    ["RSI &lt; 40 (LEAPS)",     "RSI(14) &lt; LEAPS_RSI_MAX (40)", "Only genuinely oversold names qualify"],
     ["No earnings ≤ 10d",       "Phase 4 earnings filter",       "Avoid imminent earnings gap"],
     ["Near lower BB",           "price ≤ lower BB × 1.05 (within LEAPS_BB_LOWER_PCT = 5%)", "The dip — buy quality on a pullback"],
 ]
@@ -624,6 +625,9 @@ story.append(Paragraph("For each LEAPS pick (in ranked order):", H3))
 story.append(bullet("If remaining budget &lt; cost_per_contract → skip, try next"))
 story.append(bullet("Fetch live mid-price from Tradier quotes"))
 story.append(bullet("Place <b>limit BUY TO OPEN</b> order at mid-price, qty = 1, time-in-force = day"))
+story.append(bullet("<b>Immediately rest a GTC take-profit:</b> a <b>SELL TO CLOSE</b> limit at "
+                    "<b>entry × 1.05 (+5%)</b>, duration = good-till-cancelled — so the profit target "
+                    "fills intraday without waiting for the next daily run"))
 story.append(bullet("Deduct cost from remaining budget and continue to next pick"))
 story.append(spacer(0.1))
 
@@ -707,6 +711,7 @@ leaps_param_rows = [
     ["LEAPS_MAX_DELTA",         "0.85",      "Maximum call delta (lowered from 0.99)"],
     ["LEAPS_TARGET_DELTA",      "0.77",      "Target delta — pick contract closest to this (lowered from 0.85)"],
     ["LEAPS_VIX_MIN",           "15",        "LEAPS enabled only when VIX > this"],
+    ["LEAPS_RSI_MAX",           "40",        "LEAPS-specific RSI ceiling — require RSI < this (stricter than shared 65)"],
     ["LEAPS_BB_LOWER_PCT",      "5%",        "Dip filter — price must be within this % of the lower Bollinger Band"],
     ["LEAPS_MIN_OI",            "50",        "Minimum OI (only enforced when OI > 0 from API)"],
     ["LEAPS_MAX_PORTFOLIO_PCT", "15%",       "Hard cap on total LEAPS exposure as % of portfolio (raised from 10%)"],
@@ -781,7 +786,7 @@ flow = [
     ("    • If DTE ≤ 21 and at loss  →  ⚠️ DISCORD ALERT only, no order", RED),
     ("For each open LONG CALL (LEAPS):", PURPLE),
     ("    • If stop-loss triggered (loss ≥ 50%)  →  ⚠️ DISCORD ALERT only, no order", RED),
-    ("    • If profit target reached (gain ≥ 5%)  →  🤖 SELL TO CLOSE at mid (auto)", PURPLE),
+    ("    • +5% take-profit rests as a GTC SELL TO CLOSE from entry; Phase 2 auto-close is a backstop", PURPLE),
     ("Re-fetch account to capture released capital", MID_BLUE),
     ("─── STOCK SCREENING ───", GREY_DARK),
     ("Load approved ticker list from Google Sheets", GREY_DARK),
@@ -799,15 +804,16 @@ flow = [
     ("    • Score: strike>50 SMA (+1), below mid BB (+1), pullback 0.5–5% (+1), RSI<50 (+1), IV≥40% (+1)", GREEN),
     ("    • If final score < 3: skip", GREEN),
     ("Sort CSPs: score DESC → ARR/Delta DESC → DTE DESC → ARR DESC  →  take top 5", GREEN),
-    ("─── LEAPS SCREENING (parallel; only if VIX > 15) ───", PURPLE),
+    ("─── LEAPS SCREENING (parallel; only if LEAPS_ENABLED and VIX > 15) ───", PURPLE),
     ("For each stock passing hard filters:", PURPLE),
+    ("    • RSI FILTER: skip unless RSI < 40 (LEAPS_RSI_MAX) — genuinely oversold", RED),
     ("    • DIP FILTER: skip unless price within 5% of lower BB (LEAPS_BB_LOWER_PCT)", RED),
     ("    • No scoring — survivors are all valid dip candidates", PURPLE),
     ("    • Fetch ONLY the farthest expiry chain (DTE 365–730); fall back if no contract", PURPLE),
     ("    • Filter calls: OI≥50, delta 0.70–0.85; pick closest to delta 0.77", PURPLE),
     ("Sort LEAPS: dist-above-lower-BB ASC → dist-above-200-SMA DESC  →  take top 5", PURPLE),
     ("─── EXECUTION ───", DARK_BLUE),
-    ("LEAPS: iterate top-ranked first, 1 contract each, until 15% budget exhausted", PURPLE),
+    ("LEAPS: iterate top-ranked first, 1 contract each, until 15% budget exhausted; rest GTC +5% sell", PURPLE),
     ("CSP:   iterate top-scored first, 1 contract each, until VIX-deploy cash exhausted", GREEN),
     ("All orders: limit at live Tradier mid-price, time-in-force = day", DARK_BLUE),
     ("─── DISCORD ───", MID_BLUE),

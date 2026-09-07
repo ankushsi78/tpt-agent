@@ -133,6 +133,9 @@ LEAPS_MIN_OI            = int(os.getenv("LEAPS_MIN_OI", "50"))
 # LEAPS dip-buy hard filter: price must be within this % of the lower Bollinger
 # Band (mean-reversion entry — buy quality names that have pulled back).
 LEAPS_BB_LOWER_PCT      = float(os.getenv("LEAPS_BB_LOWER_PCT", "5.0"))
+# LEAPS-specific RSI ceiling (stricter than the shared RSI_OVERBOUGHT_MAX=65):
+# require RSI < 40 — only genuinely oversold names qualify for a LEAPS dip-buy.
+LEAPS_RSI_MAX           = float(os.getenv("LEAPS_RSI_MAX", "40"))
 # Master switch: LEAPS disabled — bot runs CSP only. Set LEAPS_ENABLED=true to re-enable.
 LEAPS_ENABLED           = os.getenv("LEAPS_ENABLED", "false").lower() == "true"
 # VIX gate: LEAPS enabled when VIX > 15 (enough vol for the dip-buy thesis)
@@ -989,12 +992,19 @@ def screen_ticker_leaps(stock: dict) -> dict | None:
       • price > SMA200          (shared filter — knife guard, already applied)
       • RSI < 65                (shared filter — already applied)
       • no earnings ≤ 10d       (shared filter — already applied)
-      • price within LEAPS_BB_LOWER_PCT of the lower Bollinger Band  ← NEW
+      • RSI < 40                (LEAPS-specific — only genuinely oversold names)
+      • price within LEAPS_BB_LOWER_PCT of the lower Bollinger Band
     No scoring — survivors are all valid; prioritization happens via sort
     (closest to lower BB first, then strongest 200-SMA trend) in run().
     """
     ticker  = stock["ticker"]
+    rsi     = stock.get("rsi", 50.0)
     bb_dist = bb_distance_pct(stock)
+
+    # LEAPS-specific hard filter: RSI must be oversold (< 40)
+    if rsi >= LEAPS_RSI_MAX:
+        log(f"  ✗ {ticker}: RSI={rsi:.1f} ≥ {LEAPS_RSI_MAX} — not oversold enough for LEAPS")
+        return None
 
     # LEAPS-specific hard filter: price must be near the lower BB (pulled back)
     if bb_dist > LEAPS_BB_LOWER_PCT:
@@ -1019,10 +1029,19 @@ def screen_ticker_leaps(stock: dict) -> dict | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def place_order(option_symbol: str, underlying: str, side: str,
-                qty: int, fallback_price: float) -> tuple[bool, dict]:
-    """Place a limit order at the live mid-price (Tradier quote), fallback to provided price."""
-    live_mid = get_current_option_price(option_symbol)
-    px       = round(live_mid if live_mid else fallback_price, 2)
+                qty: int, fallback_price: float,
+                duration: str = "day", limit_price: float | None = None) -> tuple[bool, dict]:
+    """
+    Place a limit option order.
+    - limit_price given → use it directly (e.g. a +5% take-profit target).
+    - limit_price None  → use the live Tradier mid-price (fallback to provided).
+    - duration: "day" (default) or "gtc" (good-till-cancelled).
+    """
+    if limit_price is not None:
+        px = round(limit_price, 2)
+    else:
+        live_mid = get_current_option_price(option_symbol)
+        px       = round(live_mid if live_mid else fallback_price, 2)
     if px <= 0:
         log(f"    {option_symbol}: zero price — cannot place order")
         return False, {"error": "zero price"}
@@ -1035,9 +1054,9 @@ def place_order(option_symbol: str, underlying: str, side: str,
         "quantity":      str(abs(qty)),
         "type":          "limit",
         "price":         str(px),
-        "duration":      "day",
+        "duration":      duration,       # day / gtc
     }
-    log(f"    {side} {abs(qty)}x {option_symbol} @ ${px:.2f}")
+    log(f"    {side} {abs(qty)}x {option_symbol} @ ${px:.2f} ({duration})")
     return tradier_post_order(data)
 
 
@@ -1183,13 +1202,25 @@ def execute_leaps_trades(leaps_list: list[dict], portfolio_value: float,
         if remaining < cost:
             log(f"    {ticker}: cost ${cost:.0f} > remaining ${remaining:.0f} — skip"); continue
 
-        ok, resp = place_order(sym, ticker, "buy_to_open", 1, trade["mid"])
+        entry_px = round(trade["mid"], 2)
+        ok, resp = place_order(sym, ticker, "buy_to_open", 1, entry_px)
+        tp_ok = None
         if ok:
             remaining -= cost
             log(f"    {ticker} placed — remaining budget ${remaining:,.0f}")
+            # Immediately rest a GTC take-profit: SELL TO CLOSE at +5% of entry
+            target_px = round(entry_px * (1 + LEAPS_CLOSE_PROFIT_PCT), 2)
+            tp_ok, tp_resp = place_order(sym, ticker, "sell_to_close", 1, target_px,
+                                         duration="gtc", limit_price=target_px)
+            if tp_ok:
+                log(f"    {ticker} GTC take-profit resting @ ${target_px:.2f} "
+                    f"(+{LEAPS_CLOSE_PROFIT_PCT*100:.0f}%)")
+            else:
+                log(f"    {ticker} take-profit order FAILED: {tp_resp}")
         else:
             log(f"    {ticker} FAILED: {resp}")
-        executed.append({"ticker": ticker, "ok": ok, "cost": cost, "response": resp})
+        executed.append({"ticker": ticker, "ok": ok, "cost": cost,
+                         "take_profit_ok": tp_ok, "response": resp})
 
     return executed
 
@@ -1427,11 +1458,12 @@ def post_leaps_ideas(leaps_trades: list[dict], vix: float, vix_ok: bool):
     discord_post({"embeds": [{
         "title":       "🎯  LEAPS Screening Criteria [TPT]",
         "description": "\n".join([
-            "**Hard filters:** price > 200d SMA · RSI < 65 · no earnings ≤ 10d",
+            f"**Hard filters:** price > 200d SMA · RSI < {LEAPS_RSI_MAX:.0f} · no earnings ≤ 10d",
             f"**Dip entry:** price within {LEAPS_BB_LOWER_PCT:.0f}% of lower Bollinger Band",
             f"**DTE Range:** {LEAPS_MIN_DTE}–{LEAPS_MAX_DTE} days (farthest expiry)",
             f"**Target Δ:** {LEAPS_TARGET_DELTA:.2f}  (range {LEAPS_MIN_DELTA:.2f}–{LEAPS_MAX_DELTA:.2f})",
             "**Priority:** closest to lower BB, then strongest 200-SMA trend",
+            f"**Exit:** GTC take-profit at +{LEAPS_CLOSE_PROFIT_PCT*100:.0f}% placed at entry",
             f"**{vix_str}**",
         ]),
         "color": 0x8E44AD,
