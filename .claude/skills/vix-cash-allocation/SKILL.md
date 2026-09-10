@@ -14,10 +14,22 @@ balances and prints an allocation table.
 ## The five steps (what the user's framework computes)
 
 1. **Total portfolio value (NLV)** per account.
-2. **Available Cash** = NLV − (CSP collateral + LEAPS + stock value). This is the
-   *uninvested* capital — cash not tied up as put collateral, long options, or
-   shares. It can be **negative** (account is over-deployed on margin) — report
-   that honestly, don't floor it at zero.
+2. **Available Cash** = NLV − (capital tied up), where capital tied up = CSP
+   collateral + LEAPS + stock value — **but vertical spreads are charged only the
+   capital a defined-risk spread actually ties up, not full collateral**:
+   - **Put credit spread** (short higher-strike put + long lower-strike put, same
+     underlying & expiry) → capital = **width × 100 × qty** (width = short − long),
+     *not* the short's full strike collateral.
+   - **Call debit spread** (long lower-strike call + short higher-strike call, same
+     underlying & expiry) → capital = **net mark = (long − short) × qty**, *not* the
+     long call's full value as if it were a standalone LEAP.
+   - Unpaired short put → full collateral (naked CSP). Unpaired long call → full
+     value (plain LEAP). Unpaired short call → not charged (covered call / diagonal).
+
+   This is the *uninvested* capital — cash not tied up as spread/put collateral,
+   long options, or shares. It can be **negative** (account is over-deployed on
+   margin) — report that honestly, don't floor it at zero. The bundled
+   `spread_capital.py` helper does this pairing automatically (Step B).
 3. **Current Cash %** = Available Cash ÷ NLV.
 4. **Target Cash %** — from the VIX (see the band table below), interpolated by
    where VIX sits within its band.
@@ -49,26 +61,32 @@ if the market is closed, say it's the last close. If the tool returns VIX under
 
 ## Step B — Get NLV + Available Cash per account
 
-### Schwab (easiest — the script already does step 2)
-Run from the Trading project root:
-```bash
-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
-  /Users/ankushsinghal/Documents/Trading/schwab_report.py --json
-```
-- NLV = `metrics.nlv`
-- Available Cash = `metrics.cash_allocation` (defined identically: NLV − CSP
-  collateral − stock − long options). Use it directly.
+### Schwab and tastytrade — pipe the report through `spread_capital.py`
+Both accounts run vertical spreads (Schwab: MU/DRAM call debit spreads, IREN put
+spread; tastytrade: a book of put credit spreads). The helper pairs the legs by
+underlying + expiry, charges spreads at width/net (per step 2), and emits a
+ready-to-use account object (`{name, nlv, available_cash}`) on **stdout**, with a
+line-by-line pairing breakdown on **stderr** (show that to the user). Run from the
+Trading project root:
 
-### tastytrade
-Run from the Trading project root:
 ```bash
-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
-  /Users/ankushsinghal/Documents/Trading/tastytrade_report.py --json
+PY=/Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+SK=/Users/ankushsinghal/Documents/Trading/.claude/skills/vix-cash-allocation/scripts
+
+# Schwab (LIVE, real money)
+$PY /Users/ankushsinghal/Documents/Trading/schwab_report.py --json \
+  | $PY $SK/spread_capital.py --broker schwab --name "Schwab (…9724, LIVE)"
+
+# tastytrade
+$PY /Users/ankushsinghal/Documents/Trading/tastytrade_report.py --json \
+  | $PY $SK/spread_capital.py --broker tastytrade --name "tastytrade (…4301)"
 ```
-- NLV = `balances.net_liquidating_value`
-- Available Cash = NLV − (`sum(short_puts[].collateral)` + `sum(long_calls[].mkt)`
-  + `sum(equities[].mkt)`). For the standard LEAPS-only account this reduces to
-  cash, but compute it from the parts so it stays correct if positions change.
+
+Do **not** use Schwab's `metrics.cash_allocation` directly anymore — it counts
+long-call LEAPs at full value and ignores the offsetting short calls, so it
+over-states capital tied up on the MU/DRAM debit spreads. The helper is the source
+of truth. (If the helper's unpaired-leg breakdown flags a put or call you expected
+to be part of a spread, the legs may differ in expiry — check before trusting it.)
 
 ### Robinhood (both accounts) — decompose the pieces
 For each account, `account_number` from `get_accounts`:
@@ -88,9 +106,17 @@ For each account, `account_number` from `get_accounts`:
   capital the same way.
 - **Available Cash** = NLV − (CSP collateral + LEAPS + stock value).
 
+**Spreads in a Robinhood account:** the RH accounts are usually plain CSPs +
+covered calls + LEAPs, so the decomposition above is enough. But if one ever holds
+a **long put whose underlying + expiry matches a short put** (put credit spread) or
+a **short call above a long call, same expiry** (call debit spread), apply the same
+step-2 spread rule by hand: charge the put spread `width × 100 × qty` (not full
+collateral) and the call spread `(long − short) mark × qty` (not the full LEAP). No
+helper for RH — it isn't fed by a report script.
+
 Cross-check (optional sanity): for a cash/limited-margin account, Available Cash
 should land near `get_portfolio().buying_power`. A large gap usually means a
-short call was miscounted as a CSP, or a long put was missed.
+short call was miscounted as a CSP, or a long put/spread pairing was missed.
 
 Do the instrument/quote lookups in as few batched calls as possible (pass all
 option ids for an account at once).
@@ -98,8 +124,10 @@ option ids for an account at once).
 ## Step C — Compute and render with the bundled script
 
 Assemble a small JSON array (one entry per in-scope account, largest NLV first)
-and pipe it to the calculator. It owns the VIX→target interpolation and the
-table formatting so the math is identical every run:
+and pipe it to the calculator. Use the `spread_capital.py` output objects verbatim
+for Schwab and tastytrade, and the decomposed figures for the Robinhood accounts.
+The calculator owns the VIX→target interpolation and the table formatting so the
+math is identical every run:
 
 ```bash
 echo '[
