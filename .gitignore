@@ -53,3 +53,16 @@ com.ankushsinghal.tptagent.plist
 
 # Schwab OAuth token (grants account access — never commit)
 schwab_token.json
+.env.bak*
+
+# Google service-account key (grants Sheets/Drive access — never commit)
+csp-wheel-bot-e3194c27a5f7.json
+*-service-account.json
+service-account*.json
+client_secret*.json
+*credentials*.json
+gcp-*.json
+
+# Backups of secret/token files
+*.json.bak
+schwab_token.json*
