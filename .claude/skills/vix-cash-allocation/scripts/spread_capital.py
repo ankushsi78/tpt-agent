@@ -78,15 +78,25 @@ def _legs(data, key):
 
 
 def pair_put_credit(shorts, longs, det):
-    """Long put (lower strike) covers short put (higher strike), same u+e.
-    Paired -> width×100×qty. Unpaired short -> full strike collateral.
+    """Two-pass put pairing, same u+e required for both.
+
+    Pass 1 — credit spread: long lower-strike covers short higher-strike.
+             capital = width × 100 × qty.
+    Pass 2 — debit spread:  long higher-strike covers remaining short lower-strike
+             (e.g. buy 705 / sell 685 bear-put spread).
+             capital = net current mark = (long_mkt − |short_mkt|) × qty.
+    Unpaired short → full strike collateral.  Unpaired long → standalone hedge.
     Returns (put_capital, leftover_long_put_mkt)."""
     long_by = {}
     for p in longs:
         long_by.setdefault((p["u"], p["e"]), []).append(dict(p))
     cap = 0.0
-    for p in sorted(shorts, key=lambda x: -x["k"]):   # cover highest strikes first
+    carry = []   # shorts not matched in pass 1 — candidates for debit-spread pass
+
+    # --- Pass 1: credit spreads (long lower-strike covers short higher-strike) ---
+    for p in sorted(shorts, key=lambda x: -x["k"]):
         rem = p["q"]
+        per = abs(p["mkt"]) / p["q"] if p["q"] else 0.0   # |mark| per short contract
         for lg in sorted(long_by.get((p["u"], p["e"]), []), key=lambda x: -x["k"]):
             if lg["k"] >= p["k"] or lg["q"] <= 0:
                 continue
@@ -96,7 +106,7 @@ def pair_put_credit(shorts, longs, det):
             width = p["k"] - lg["k"]
             c = width * 100 * pair
             cap += c
-            lg["mkt"] -= lg["mkt"] / max(lg["q"], 1) * pair  # consume proportional mkt
+            lg["mkt"] -= lg["mkt"] / max(lg["q"], 1) * pair
             lg["q"] -= pair
             rem -= pair
             det.append(f"  PUT SPREAD  {p['u']:6} {p['k']:.0f}/{lg['k']:.0f} x{pair:.0f}"
@@ -104,10 +114,34 @@ def pair_put_credit(shorts, longs, det):
             if rem <= 0:
                 break
         if rem > 0:
+            carry.append({"u": p["u"], "e": p["e"], "k": p["k"],
+                          "q": rem, "mkt_per": per})
+
+    # --- Pass 2: debit spreads (long higher-strike covers remaining short lower-strike) ---
+    for p in sorted(carry, key=lambda x: x["k"]):
+        rem = p["q"]
+        for lg in sorted(long_by.get((p["u"], p["e"]), []), key=lambda x: -x["k"]):
+            if lg["k"] <= p["k"] or lg["q"] <= 0:
+                continue
+            pair = min(rem, lg["q"])
+            if pair <= 0:
+                continue
+            long_per = lg["mkt"] / lg["q"] if lg["q"] else 0.0
+            c = max(0.0, (long_per - p["mkt_per"]) * pair)
+            cap += c
+            lg["mkt"] -= long_per * pair
+            lg["q"] -= pair
+            rem -= pair
+            det.append(f"  PUT DEBIT   {p['u']:6} {lg['k']:.0f}/{p['k']:.0f} x{pair:.0f}"
+                       f"  net(long-short) -> ${c:,.0f}")
+            if rem <= 0:
+                break
+        if rem > 0:
             c = p["k"] * 100 * rem
             cap += c
             det.append(f"  NAKED PUT   {p['u']:6} {p['k']:.0f} x{rem:.0f}"
                        f"           -> ${c:,.0f}  (full collateral)")
+
     leftover = sum(lg["mkt"] for lgs in long_by.values() for lg in lgs if lg["q"] > 0)
     for lgs in long_by.values():
         for lg in lgs:
