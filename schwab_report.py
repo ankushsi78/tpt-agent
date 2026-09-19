@@ -224,7 +224,17 @@ def compute_metrics(d, anchors):
     bom = anchors["beginning_of_month"]["nlv"]
     rz = anchors["realized_ytd"]["net_gain"]
     target_pct = anchors.get("monthly_target_pct", 4.0)
-    realized_mtd = reconstruct_realized_mtd()
+    # Prefer the official realized MTD from the Schwab G/L CSV (via anchors)
+    # when it's for the current month; the transactions-API reconstruction
+    # understates, so it's only a fallback.
+    cur_month = dt.date.today().strftime("%Y-%m")
+    anchor_mtd = anchors.get("realized_mtd")
+    if anchor_mtd and anchor_mtd.get("month") == cur_month:
+        realized_mtd = anchor_mtd["net_gain"]
+        realized_mtd_official = True
+    else:
+        realized_mtd = reconstruct_realized_mtd()
+        realized_mtd_official = False
     realized_mtd_pct = realized_mtd / bom * 100
     # Progress toward the monthly target is measured on REALIZED MTD gains.
     mtd_target_progress = realized_mtd_pct / target_pct * 100 if target_pct else 0.0
@@ -244,6 +254,7 @@ def compute_metrics(d, anchors):
         "realized_ytd_pct_boy": rz / boy * 100,
         "realized_mtd": realized_mtd,
         "realized_mtd_pct_bom": realized_mtd_pct,
+        "realized_mtd_official": realized_mtd_official,
         "allocation": alloc_rows,
         "flag_pct": flag_pct,
     }
@@ -306,7 +317,8 @@ def print_metrics(m, anchors):
     print(f"  4. Realized gain YTD     : {_money(m['realized_ytd'])}"
           f"  ({m['realized_ytd_pct_boy']:+.2f}% of BoY)  [Schwab official]")
     print(f"  5. Realized gain MTD     : {_money(m['realized_mtd'])}"
-          f"  ({m['realized_mtd_pct_bom']:+.2f}% of BoM)  [preliminary]")
+          f"  ({m['realized_mtd_pct_bom']:+.2f}% of BoM)  "
+          f"[{'Schwab official' if m['realized_mtd_official'] else 'reconstructed/preliminary'}]")
     print(f"  6/7. Allocation by ticker (>{m['flag_pct']:.0f}% flagged):")
     for a in m["allocation"]:
         flag = "  <<< FLAG" if a["flag"] else ""

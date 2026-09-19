@@ -44,16 +44,19 @@ TOKEN_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schwab_
 ALLOW_LIVE   = os.getenv("SCHWAB_ALLOW_LIVE", "0") == "1"
 
 
-def get_client(interactive=False):
+def get_client(interactive=False, force_login=False):
     """Return an authenticated schwab-py client.
 
     Uses the cached token if present; otherwise (interactive=True) runs the
-    one-time browser login flow and caches the token.
+    one-time browser login flow and caches the token. Pass force_login=True
+    (the login helper does) to always run a fresh browser login — needed when
+    the cached refresh token has expired, since schwab-py can't tell a stale
+    token file from a good one until it tries to use it.
     """
     if not API_KEY or not API_SECRET:
         sys.exit("ERROR: set SCHWAB_API_KEY and SCHWAB_API_SECRET in .env")
 
-    if os.path.exists(TOKEN_PATH):
+    if os.path.exists(TOKEN_PATH) and not force_login:
         return client_from_token_file(TOKEN_PATH, API_KEY, API_SECRET)
 
     if not interactive:
@@ -61,9 +64,14 @@ def get_client(interactive=False):
             f"No token at {TOKEN_PATH}. Run:  python3 schwab_login.py"
         )
 
-    # One-time login: opens a browser, you approve, token gets cached.
+    # Fresh login: opens a browser, you approve, token gets cached. Remove any
+    # stale token first so schwab-py doesn't reuse an expired one.
+    # interactive=False skips schwab-py's "Press ENTER" prompt and opens the
+    # browser straight away.
+    if os.path.exists(TOKEN_PATH):
+        os.remove(TOKEN_PATH)
     return client_from_login_flow(
-        API_KEY, API_SECRET, CALLBACK_URL, TOKEN_PATH,
+        API_KEY, API_SECRET, CALLBACK_URL, TOKEN_PATH, interactive=False,
     )
 
 

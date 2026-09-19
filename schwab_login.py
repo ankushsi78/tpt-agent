@@ -21,7 +21,8 @@ from schwab_client import get_client, get_account_hash, account_summary
 if __name__ == "__main__":
     print("Starting Schwab login flow — a browser window will open.")
     print("You'll see a self-signed cert warning on 127.0.0.1 — that's expected; proceed.\n")
-    client = get_client(interactive=True)
-    print("\nLogin successful. Token cached to schwab_token.json\n")
+    client = get_client(interactive=True, force_login=True)
+    # Verify the new token actually works before declaring success.
     h = get_account_hash(client)
+    print("\nLogin successful. Token cached to schwab_token.json\n")
     account_summary(client, h)

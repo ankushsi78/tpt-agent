@@ -66,3 +66,6 @@ gcp-*.json
 # Backups of secret/token files
 *.json.bak
 schwab_token.json*
+
+# Brokerage statements & realized-gain exports (sensitive — never commit)
+Schwab-Statements/
