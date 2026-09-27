@@ -53,3 +53,4 @@ com.ankushsinghal.tptagent.plist
 
 # Schwab OAuth token (grants account access — never commit)
 schwab_token.json
+reports/

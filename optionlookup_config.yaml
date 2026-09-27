@@ -1,0 +1,40 @@
+# Option Lookup — daily CSP screener config.
+# Edit these values freely; the job hard-codes NONE of them.
+
+provider: schwab          # schwab | tradier   (primary market-data provider)
+fallback: [tradier]       # providers to try if the primary errors for a ticker (optional; [] to disable)
+
+universe:
+  # The screen universe is the UNION of every source below (deduped, order preserved).
+  sources:
+    - type: google_sheet
+      sheet_id: 1ABYAKLvMgoHbM2gccwrfFGYsP6U-Y0VYFnU9SFOPjVo
+      gid: 2070468346
+      column: Ticker          # header name; falls back to the first column if not found
+    - type: file
+      path: extra_tickers.txt # one ticker per line
+    # - type: inline
+    #   tickers: [AMD, HPE]
+
+strategy:
+  option_type: Cash Secured Put   # this job is CSP-only
+  delta_min: 0.15                 # keep contracts with |delta| >= this
+  delta_max: 0.25                 # keep contracts with |delta| <= this
+  dte_min: 30                     # days-to-expiry window (inclusive)
+  dte_max: 45
+  min_open_interest: 100          # keep contracts with open interest > this
+  target_arr: 30                  # keep contracts with annualized return % > this
+  premium_basis: bid              # bid (matches the app) | mid
+  rank_by: arr                    # arr | premium | pop
+  top_n_per_ticker: 3             # best N contracts kept per ticker
+  max_results: 40                 # overall cap on rows in the report
+
+output:
+  pdf_dir: reports
+  title: Cash Secured Put Trade Ideas
+  discord_webhook_env: DISCORD_WEBHOOK_URL   # name of the env var holding the webhook URL
+  post_when_empty: true                      # still post a PDF when nothing qualifies
+
+run:
+  skip_weekends: true
+  request_pause_secs: 0.4          # throttle between provider calls (be nice to the API)
