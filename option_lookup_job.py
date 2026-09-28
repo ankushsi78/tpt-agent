@@ -53,17 +53,38 @@ def _tickers_from_file(path):
 
 
 def _tickers_from_google_sheet(src):
-    import csv
-    import io
-    url = (f"https://docs.google.com/spreadsheets/d/{src['sheet_id']}/export"
-           f"?format=csv&gid={src.get('gid', 0)}")
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    reader = csv.DictReader(io.StringIO(resp.text))
-    col = src.get("column")
-    if col not in (reader.fieldnames or []):
-        col = (reader.fieldnames or ["Ticker"])[0]  # fall back to first column
-    return [r[col].strip().upper() for r in reader if (r.get(col) or "").strip()]
+    # Read via the Sheets API (sheets.googleapis.com) with a service account.
+    # NOTE: the public docs.google.com CSV export is intentionally NOT used —
+    # this network resets connections to docs.google.com / www.google.com, while
+    # the API host is reachable. The sheet must be shared with the service
+    # account (viewer is enough).
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    creds_file = src.get("creds_file", "csp-wheel-bot-e3194c27a5f7.json")
+    if not os.path.isabs(creds_file):
+        creds_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), creds_file)
+    creds = Credentials.from_service_account_file(
+        creds_file, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            gc = gspread.authorize(creds)
+            sh = gc.open_by_key(src["sheet_id"])
+            ws = sh.get_worksheet_by_id(int(src.get("gid", 0)))
+            rows = ws.get_all_values()
+            if not rows:
+                return []
+            header = rows[0]
+            col = src.get("column")
+            idx = header.index(col) if col in header else 0  # fall back to first column
+            return [r[idx].strip().upper() for r in rows[1:]
+                    if len(r) > idx and r[idx].strip()]
+        except Exception as e:
+            last_err = e
+            time.sleep(2 * (attempt + 1))
+    raise last_err
 
 
 def resolve_universe(cfg):
