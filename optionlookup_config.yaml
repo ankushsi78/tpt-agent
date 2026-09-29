@@ -11,6 +11,7 @@ universe:
       sheet_id: 1ABYAKLvMgoHbM2gccwrfFGYsP6U-Y0VYFnU9SFOPjVo
       gid: 2070468346
       column: Ticker          # header name; falls back to the first column if not found
+      creds_file: csp-wheel-bot-e3194c27a5f7.json   # service account (sheet shared as viewer)
     - type: file
       path: extra_tickers.txt # one ticker per line
     # - type: inline
