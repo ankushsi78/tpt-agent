@@ -73,6 +73,7 @@ var float  actInval   = na
 var int    actBar     = na
 var box    actBox     = na
 var int    lastEndBar = 0
+var float  lastEndPiv = na
 
 // ── Candidate: Cup with Handle ────────────────────────────────────────────
 rOff = -ta.highestbars(high, hMaxLen + 1)   // bars since right-side high (handle start)
@@ -180,11 +181,14 @@ if useDb and n >= 2 and bar_index > dbMaxSpan + dbLeftLook + 70
                     if high[k] > H0
                         H0    := high[k]
                         h0Off := k
+                hiSince = high
+                for k = 0 to o2 - 1
+                    hiSince := math.max(hiSince, high[k])
                 lows  = math.min(s1v, s2v)
                 depth = (H0 - lows) / H0 * 100
                 pLow  = priorLowBefore(h0Off)
                 advOk = (H0 - pLow) / pLow * 100 >= priorAdv
-                if tolOk and lowBetween >= lows and M >= math.max(s1v, s2v) * (1 + dbMinMid / 100) and M < H0 and depth >= dbMinDepth and depth <= dbMaxDepth and h0Off >= dbMinLen and advOk and close < M + pivotAdd
+                if tolOk and lowBetween >= lows and M >= math.max(s1v, s2v) * (1 + dbMinMid / 100) and M < H0 and depth >= dbMinDepth and depth <= dbMaxDepth and h0Off >= dbMinLen and advOk and hiSince < M + pivotAdd
                     dbOk    := true
                     dbPivot := M + pivotAdd
                     dbH0    := H0
@@ -261,23 +265,33 @@ evtType   = ""
 
 if actType != ""
     if close > actPivot
-        crossPx   := true
-        evtPivot  := actPivot
-        evtType   := actType
-        volBreak  := volume >= volMult * avgVol[1] and close <= actPivot * (1 + buyZonePct / 100)
-        weakBreak := not volBreak
-        actType   := ""
+        firstCross = close[1] <= actPivot
+        inZone     = close <= actPivot * (1 + buyZonePct / 100)
+        crossPx  := firstCross
+        evtPivot := actPivot
+        evtType  := actType
+        if inZone and volume >= volMult * avgVol[1]
+            volBreak := true                             // confirmed: base is done
+            actType  := ""
+        else if not inZone
+            weakBreak := firstCross                      // gapped past the buy zone: too extended
+            actType   := ""
+        else
+            weakBreak := firstCross                      // above pivot on light volume: keep watching for volume
     else if close < actInval or bar_index - actBar > actMaxBars
         failed  := close < actInval
         actType := ""
     else
         attempt := high > actPivot
     if actType == ""
+        lastEndPiv := nz(evtPivot, actPivot)
         actPivot   := na
         actBox     := na
         lastEndBar := bar_index
 
-if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or flatOk)
+candPivot = cupOk ? cupPivot : dbOk ? dbPivot : flatPivot
+sameAsLast = not na(lastEndPiv) and math.abs(candPivot / lastEndPiv - 1) < 0.01 and bar_index - lastEndBar < 15
+if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or flatOk) and not sameAsLast
     newBase := true
     actBar  := bar_index
     actBox  := na
@@ -305,7 +319,7 @@ if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or f
     else
         actType  := "Flat Base"
         actPivot := flatPivot
-        actInval := flatLL
+        actInval := flatHH * (1 - flatMaxDepth / 100)    // fails only if the base gets deeper than allowed
         actBox   := box.new(bar_index - flatLen + 1, flatHH, bar_index, flatLL, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90))
         label.new(bar_index - flatHOff, flatHH, "Flat " + str.tostring(flatPivot, format.mintick), style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
 
