@@ -5,7 +5,7 @@
 //   1. New base detected      2. Price within X% of pivot
 //   3. Price crossing pivot (intraday)   4. Volume-confirmed breakout (at close)
 // Pattern detection is heuristic -- always confirm the chart by eye.
-indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM Bases", overlay = true, max_bars_back = 600, max_lines_count = 300, max_boxes_count = 100, max_labels_count = 100)
+indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM", overlay = true, max_bars_back = 600, max_lines_count = 300, max_boxes_count = 100, max_labels_count = 100)
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 grpCup      = "Cup with Handle"
