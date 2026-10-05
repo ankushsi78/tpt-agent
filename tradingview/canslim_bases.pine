@@ -1,0 +1,203 @@
+//@version=6
+// CAN SLIM Base & Pivot Alerts
+// Detects O'Neil-style Cup-with-Handle and Flat Base patterns on DAILY charts,
+// plots the pivot (buy point) and fires alerts for:
+//   1. New base detected      2. Price within X% of pivot
+//   3. Price crossing pivot (intraday)   4. Volume-confirmed breakout (at close)
+// Pattern detection is heuristic -- always confirm the chart by eye.
+indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM Bases", overlay = true, max_bars_back = 600, max_lines_count = 300, max_boxes_count = 100, max_labels_count = 100)
+
+// ── Inputs ────────────────────────────────────────────────────────────────
+grpCup      = "Cup with Handle"
+cupMinLen   = input.int(35, "Cup min length (bars)", minval = 10, maxval = 450, group = grpCup, tooltip = "35 daily bars ≈ 7 weeks")
+cupMaxLen   = input.int(325, "Cup max length (bars)", minval = 20, maxval = 450, group = grpCup, tooltip = "325 daily bars ≈ 65 weeks")
+cupMinDepth = input.float(12.0, "Cup min depth %", group = grpCup)
+cupMaxDepth = input.float(35.0, "Cup max depth %", group = grpCup)
+lipTol      = input.float(5.0, "Right-side high within % of left lip", group = grpCup)
+hMinLen     = input.int(5, "Handle min length (bars)", minval = 1, maxval = 40, group = grpCup)
+hMaxLen     = input.int(25, "Handle max length (bars)", minval = 2, maxval = 40, group = grpCup)
+hMaxDepth   = input.float(12.0, "Handle max depth %", group = grpCup)
+hUpperHalf  = input.bool(true, "Handle must be in upper half of cup", group = grpCup)
+hVolDry     = input.bool(true, "Handle avg volume below 50-day avg", group = grpCup)
+
+grpFlat      = "Flat Base"
+useFlat      = input.bool(true, "Detect flat bases", group = grpFlat)
+flatMinLen   = input.int(25, "Flat base min length (bars)", minval = 10, group = grpFlat, tooltip = "25 daily bars ≈ 5 weeks")
+flatMaxLen   = input.int(100, "Flat base max length (bars)", minval = 15, maxval = 400, group = grpFlat)
+flatMaxDepth = input.float(15.0, "Flat base max depth %", group = grpFlat)
+
+grpGen      = "Filters & Breakout"
+priorAdv    = input.float(20.0, "Min prior uptrend into base %", group = grpGen, tooltip = "Rise from the 3-month low before the base to the base high. O'Neil prefers 30%+ for cups.")
+trendFilter = input.bool(true, "Require close above 200-day SMA", group = grpGen)
+nearPct     = input.float(3.0, "'Near pivot' zone: % below pivot", group = grpGen)
+volMult     = input.float(1.4, "Breakout volume ≥ x × 50-day avg", group = grpGen)
+buyZonePct  = input.float(5.0, "Buy zone: % above pivot", group = grpGen)
+pivotAdd    = input.float(0.10, "Pivot = base high + $", group = grpGen)
+
+// ── Common series ─────────────────────────────────────────────────────────
+avgVol  = ta.sma(volume, 50)
+sma200  = ta.sma(close, 200)
+trendOk = not trendFilter or close > sma200
+
+priorLowBefore(int off) =>
+    float m = low[off]
+    for i = off + 1 to off + 63
+        m := math.min(m, low[i])
+    m
+
+// ── Cup with Handle ───────────────────────────────────────────────────────
+rOff = -ta.highestbars(high, hMaxLen + 1)   // bars since right-side high (handle start)
+R    = high[rOff]
+
+cupOk     = false
+cupPivot  = float(na)
+cupL      = float(na)
+cupLow    = float(na)
+cupLOff   = int(na)
+cupLowOff = int(na)
+
+if bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
+    // Handle stats (bars after the right-side high)
+    hLow    = low
+    hVolSum = 0.0
+    for k = 0 to rOff - 1
+        hLow    := math.min(hLow, low[k])
+        hVolSum += volume[k]
+    hDepth  = (R - hLow) / R * 100
+    hAvgVol = hVolSum / rOff
+
+    // Walk left from the right-side high: must dip >= min depth, then recover to the left lip
+    lipLevel = R * (1 - lipTol / 100)
+    lowest   = R
+    lowOff   = rOff
+    lOff     = -1
+    for i = rOff + 1 to rOff + cupMaxLen
+        if (R - lowest) / R * 100 >= cupMinDepth and high[i] >= lipLevel
+            lOff := i
+            break
+        if low[i] < lowest
+            lowest := low[i]
+            lowOff := i
+        if (lipLevel - lowest) / lipLevel * 100 > cupMaxDepth
+            break
+
+    if lOff > 0
+        // Slide to the local peak of the left lip
+        L      = high[lOff]
+        maxOff = math.min(lOff + 10, rOff + cupMaxLen)
+        if maxOff > lOff
+            for j = lOff + 1 to maxOff
+                if high[j] > L
+                    L    := high[j]
+                    lOff := j
+        cupLen  = lOff - rOff
+        depth   = (L - lowest) / L * 100
+        rightOk = R >= L * (1 - lipTol / 100) and R <= L * (1 + lipTol / 100)
+        upperOk = not hUpperHalf or hLow >= lowest + 0.5 * (L - lowest)
+        volOk   = not hVolDry or hAvgVol < avgVol
+        pLow    = priorLowBefore(lOff)
+        advOk   = (L - pLow) / pLow * 100 >= priorAdv
+        if cupLen >= cupMinLen and depth >= cupMinDepth and depth <= cupMaxDepth and rightOk and hDepth <= hMaxDepth and upperOk and volOk and advOk and close < R + pivotAdd
+            cupOk     := true
+            cupPivot  := R + pivotAdd
+            cupL      := L
+            cupLow    := lowest
+            cupLOff   := lOff
+            cupLowOff := lowOff
+
+// ── Flat Base ─────────────────────────────────────────────────────────────
+flatOk    = false
+flatPivot = float(na)
+flatLen   = 0
+flatHH    = float(na)
+flatLL    = float(na)
+
+if useFlat and not cupOk and bar_index > flatMaxLen + 70
+    hh = high
+    ll = low
+    for i = 1 to flatMaxLen - 1
+        nh = math.max(hh, high[i])
+        nl = math.min(ll, low[i])
+        if (nh - nl) / nh * 100 > flatMaxDepth
+            break
+        hh := nh
+        ll := nl
+        if i + 1 >= flatMinLen
+            flatLen := i + 1
+    if flatLen >= flatMinLen
+        pLow = priorLowBefore(flatLen)
+        if (hh - pLow) / pLow * 100 >= priorAdv and close < hh + pivotAdd
+            flatOk    := true
+            flatPivot := hh + pivotAdd
+            flatHH    := hh
+            flatLL    := ll
+
+// ── Combine ───────────────────────────────────────────────────────────────
+baseOk   = trendOk and (cupOk or flatOk)
+pivot    = baseOk ? (cupOk ? cupPivot : flatPivot) : na
+baseType = cupOk ? "Cup with Handle" : "Flat Base"
+
+bs        = ta.barssince(baseOk)
+newBase   = baseOk and (na(bs[1]) or bs[1] > 5)            // ignore flicker within 5 bars
+nearNow   = baseOk and close >= pivot * (1 - nearPct / 100)
+nearEvent = nearNow and not nearNow[1]
+
+// Remember the last valid pivot so a breakout bar (where the base is no longer "forming") can use it
+var float  lastPivot   = na
+var int    lastBaseBar = na
+var string lastType    = ""
+recentBase = not na(lastBaseBar) and bar_index - lastBaseBar <= 3
+crossPx    = recentBase and close > lastPivot and close[1] <= lastPivot
+volBreak   = crossPx and volume >= volMult * avgVol[1] and close <= lastPivot * (1 + buyZonePct / 100)
+if baseOk
+    lastPivot   := pivot
+    lastBaseBar := bar_index
+    lastType    := baseType
+
+// ── Visuals ───────────────────────────────────────────────────────────────
+plot(pivot, "Pivot", color.orange, 2, plot.style_linebr)
+plot(baseOk ? pivot * (1 + buyZonePct / 100) : na, "Buy zone top", color.new(color.green, 40), 1, plot.style_linebr)
+plot(lastPivot, "Last pivot", display = display.none)
+plotshape(newBase, "Base detected", shape.diamond, location.abovebar, color.orange, size = size.tiny)
+plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, text = "BO", textcolor = color.white, size = size.small)
+
+if newBase and cupOk
+    x0 = bar_index - cupLOff
+    x1 = bar_index - cupLowOff
+    x2 = bar_index - rOff
+    line.new(x0, cupL, x1, cupLow, color = color.new(color.orange, 30), width = 2)
+    line.new(x1, cupLow, x2, R, color = color.new(color.orange, 30), width = 2)
+    line.new(x2, R, bar_index, R, color = color.new(color.orange, 30), width = 1, style = line.style_dotted)
+    label.new(x2, R, "C&H " + str.tostring(cupPivot, format.mintick), style = label.style_label_down, color = color.orange, textcolor = color.white, size = size.small)
+if newBase and flatOk
+    box.new(bar_index - flatLen + 1, flatHH, bar_index, flatLL, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90))
+    label.new(bar_index, flatHH, "Flat " + str.tostring(flatPivot, format.mintick), style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
+
+var table tb = table.new(position.top_right, 2, 4, border_width = 1)
+if barstate.islast
+    fg = chart.fg_color
+    table.cell(tb, 0, 0, "Base", text_color = fg)
+    table.cell(tb, 1, 0, not timeframe.isdaily ? "Use DAILY chart" : baseOk ? baseType : "None", text_color = fg)
+    table.cell(tb, 0, 1, "Pivot", text_color = fg)
+    table.cell(tb, 1, 1, baseOk ? str.tostring(pivot, format.mintick) : "—", text_color = fg)
+    table.cell(tb, 0, 2, "vs pivot", text_color = fg)
+    table.cell(tb, 1, 2, baseOk ? str.tostring((close / pivot - 1) * 100, "#.##") + "%" : "—", text_color = fg)
+    table.cell(tb, 0, 3, "Trend", text_color = fg)
+    table.cell(tb, 1, 3, trendOk ? "OK (> 200d)" : "Below 200d", text_color = trendOk ? color.green : color.red)
+
+// ── Alerts ────────────────────────────────────────────────────────────────
+// Option A: create ONE alert with condition "Any alert() function call" to get all four events
+if newBase
+    alert(syminfo.ticker + ": " + baseType + " detected. Pivot " + str.tostring(pivot, format.mintick) + ", close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if nearEvent
+    alert(syminfo.ticker + ": within " + str.tostring(nearPct) + "% of " + baseType + " pivot " + str.tostring(pivot, format.mintick), alert.freq_once_per_bar_close)
+if crossPx
+    alert(syminfo.ticker + ": crossing " + lastType + " pivot " + str.tostring(lastPivot, format.mintick) + " intraday — check volume", alert.freq_once_per_bar)
+if volBreak
+    alert(syminfo.ticker + ": VOLUME-CONFIRMED BREAKOUT from " + lastType + ". Pivot " + str.tostring(lastPivot, format.mintick) + ", vol " + str.tostring(volume / avgVol[1], "#.#") + "x avg. Buy zone to " + str.tostring(lastPivot * (1 + buyZonePct / 100), format.mintick), alert.freq_once_per_bar_close)
+
+// Option B: individual conditions (pick one per alert)
+alertcondition(newBase, "1. Base detected", "{{ticker}}: CAN SLIM base detected. Pivot {{plot(\"Pivot\")}}, close {{close}}")
+alertcondition(nearEvent, "2. Near pivot", "{{ticker}}: within range of pivot {{plot(\"Pivot\")}}, close {{close}}")
+alertcondition(crossPx, "3. Crossing pivot (price)", "{{ticker}}: crossing pivot {{plot(\"Last pivot\")}}, price {{close}}")
+alertcondition(volBreak, "4. Volume-confirmed breakout", "{{ticker}}: volume-confirmed breakout above {{plot(\"Last pivot\")}}, close {{close}}, volume {{volume}}")

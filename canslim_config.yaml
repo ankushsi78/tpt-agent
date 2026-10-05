@@ -1,0 +1,50 @@
+# CAN SLIM screener config. Every threshold lives here — canslim_screener.py hard-codes none.
+
+universe:
+  # Ranking universe = all US-listed stocks from Nasdaq's screener (NYSE + Nasdaq + AMEX)
+  min_price: 5
+  min_market_cap: 300_000_000
+  extra_tickers_file: null        # optional: always include these tickers (one per line)
+
+rs:
+  # IBD-style weighting: most recent quarter counts double
+  #   score = 0.4*ret(3m) + 0.2*ret(6m) + 0.2*ret(9m) + 0.2*ret(12m) -> percentile 1..99
+  weights: {63: 0.4, 126: 0.2, 189: 0.2, 252: 0.2}
+
+groups:
+  min_members: 3                  # industries with fewer stocks are not ranked
+
+criteria:
+  # C — current quarterly earnings & sales (year over year)
+  min_eps_q_growth: 25
+  min_sales_q_growth: 20
+  # A — annual earnings
+  min_eps_annual_cagr: 25         # 3-year EPS CAGR
+  min_roe: 17
+  # N — near new highs
+  max_off_high_pct: 15
+  # S — accumulation: 50-day up-volume / down-volume
+  min_up_down_vol: 1.0
+  # L — leader in a leading group
+  min_rs: 80
+  max_group_rank_pct: 40          # group must rank in the top 40% of industries
+  # Liquidity
+  min_avg_dollar_vol: 10_000_000  # 50-day average $ volume
+  # A stock makes the watchlist if it passes at least this many of the 7 checks
+  # (C-eps, C-sales, A, N, S, L-rs, L-group) AND passes all `required` checks.
+  min_checks_passed: 5
+  required: [c_eps, l_rs, trend]   # trend = close > 50-day and 200-day SMA
+
+market:
+  indexes: [SPY, QQQ]              # ETF proxies for S&P 500 / Nasdaq
+  distribution_lookback: 25        # sessions
+  distribution_min_drop_pct: 0.2   # down day this much or more on higher volume = distribution day
+
+output:
+  sheet_id: 1Ovtnk_D1Rf4rFFJh5MEzUVtxO1jAq-4Tpw-SwiRpIes                 # Google Sheet ID; share it with csp-bot@csp-wheel-bot.iam.gserviceaccount.com as Editor
+  creds_file: csp-wheel-bot-e3194c27a5f7.json
+  csv_dir: reports                 # local CSV copy of each tab (always written)
+  max_rs_rows: 500                 # rows in the "RS Rankings" tab
+  sec_user_agent: "BayFin Research contactankush@gmail.com"   # SEC requires a contact email
+  cache_dir: .cache/canslim        # SEC + Nasdaq downloads cached for cache_hours
+  cache_hours: 20
