@@ -2,8 +2,9 @@
 """
 CAN SLIM base detector + "Watchlist Status" tab for the CANSLIM Screener Google Sheet.
 
-This is a bar-by-bar port of tradingview/canslim_bases.pine (v2.4): cup with handle, double bottom
-and flat base, a frozen pivot while a base is active, and the same BUY / BO? / EXT / failed events.
+This is a bar-by-bar port of tradingview/canslim_bases.pine (v3): bases found on WEEKLY bars (or daily),
+breakouts timed on daily bars — cup with/without handle, double bottom, flat base, DEEP bases, frozen pivot,
+and the same BUY / BO? / EXT / failed events.
 Keep the two in sync — the defaults live in canslim_config.yaml under `bases:`.
 
 Tickers come from the sheet's "My Watchlist" tab (column A, one ticker per row). The tab is created
@@ -35,106 +36,133 @@ def log(msg):
 
 # ── Detector (port of the Pine script) ────────────────────────────────────────
 
-def detect(df, p):
-    """Run the base state machine over a daily OHLCV frame. Returns (final_state, events)."""
-    h, l, c, v = (df[k].to_numpy(float) for k in ("High", "Low", "Close", "Volume"))
-    n = len(df)
-    dates = df.index
-    avg_vol = pd.Series(v).rolling(50).mean().to_numpy()
-    sma200 = pd.Series(c).rolling(200).mean().to_numpy()
+def _sc(x, weekly, lo):
+    """Daily-bar length → weekly-bar length (Pine: math.max(lo, math.round(x / 5.0)))."""
+    return max(lo, int(math.floor(x / 5.0 + 0.5))) if weekly else x
 
-    def prior_low(t, off):
-        return l[t - off - 63:t - off + 1].min()
 
-    st = {"type": "", "pivot": np.nan, "inval": np.nan, "bar": None, "crossed": False, "weak": False,
-          "attempts": 0}
-    last_end_bar, last_end_piv = 0, np.nan
-    sl_val, sl_bar = [], []                       # confirmed swing lows (double bottom)
-    events = []
-    k = p["dbK"]
+class Scanner:
+    """Bar-by-bar base scan on one timeframe (Pine `detect()`). Call step(t) for t = 0, 1, 2, … in order."""
 
-    for t in range(n):
-        trend_ok = (not p["trendFilter"]) or (not np.isnan(sma200[t]) and c[t] > sma200[t])
+    def __init__(self, df, p, weekly):
+        self.h, self.l, self.c, self.v = (df[k].to_numpy(float) for k in ("High", "Low", "Close", "Volume"))
+        self.time = df.index
+        self.p, self.w = p, weekly
+        self.cMin, self.cMx = _sc(p["cupMinLen"], weekly, 2), _sc(p["cupMaxLen"], weekly, 10)
+        self.hMn, self.hMx = _sc(p["hMinLen"], weekly, 1), _sc(p["hMaxLen"], weekly, 2)
+        self.k, self.gap = _sc(p["dbK"], weekly, 2), _sc(p["dbMinGap"], weekly, 2)
+        self.span, self.look = _sc(p["dbMaxSpan"], weekly, 10), _sc(p["dbLeftLook"], weekly, 5)
+        self.dLen = _sc(p["dbMinLen"], weekly, 2)
+        self.fMin, self.fMx, self.fAge = (_sc(p["flatMinLen"], weekly, 2), _sc(p["flatMaxLen"], weekly, 5),
+                                          _sc(p["flatHighAge"], weekly, 1))
+        self.plb, self.side, self.slide, self.recent = (13, 2, 2, 6) if weekly else (63, 10, 10, 30)
+        deep = p.get("allowDeep", True)
+        self.cupEff = max(p["cupMaxDepth"], p["deepMax"]) if deep else p["cupMaxDepth"]
+        self.dbEff = max(p["dbMaxDepth"], p["deepMax"]) if deep else p["dbMaxDepth"]
+        self.avgV = pd.Series(self.v).rolling(10 if weekly else 50).mean().to_numpy()
+        self.sv, self.sb = [], []
 
-        # ── cup with handle
-        cup = None
-        if t > p["cupMaxLen"] + p["hMaxLen"] + 80:
-            win = h[t - p["hMaxLen"]:t + 1]
-            r_off = int(np.argmax(win[::-1]))                            # bars since the right-side high
+    def _plow(self, t, off):
+        return self.l[t - off - self.plb:t - off + 1].min()
+
+    def step(self, t, flat_limit=None):
+        h, l, c, v, p, T = self.h, self.l, self.c, self.v, self.p, self.time
+        k = self.k
+        if t >= 2 * k:                                           # ta.pivotlow(low, k, k)
+            ctr = t - k
+            if l[ctr] < l[ctr - k:ctr].min() and l[ctr] <= l[ctr + 1:t + 1].min():
+                self.sv.append(l[ctr]); self.sb.append(ctr)
+                if len(self.sv) > 12:
+                    self.sv.pop(0); self.sb.pop(0)
+        if t <= self.cMx + self.hMx + self.plb + 20:
+            return None
+
+        # cup with handle
+        if p.get("useCup", True):
+            win = h[t - self.hMx:t + 1]
+            r_off = int(np.argmax(win[::-1]))
             R = h[t - r_off]
-            if p["hMinLen"] <= r_off <= p["hMaxLen"]:
+            if self.hMn <= r_off <= self.hMx:
                 h_low = l[t - r_off + 1:t + 1].min()
-                h_avg_vol = v[t - r_off + 1:t + 1].mean()
-                h_depth = (R - h_low) / R * 100
+                h_avg = v[t - r_off + 1:t + 1].mean()
                 lip = R * (1 - p["lipTol"] / 100)
-                lowest, low_off, l_off, inner_hi = R, r_off, -1, 0.0
-                for i in range(r_off + 1, r_off + p["cupMaxLen"] + 1):
+                lowest, low_off, l_off, inner = R, r_off, -1, 0.0
+                for i in range(r_off + 1, r_off + self.cMx + 1):
                     if (R - lowest) / R * 100 >= p["cupMinDepth"] and h[t - i] >= lip:
                         l_off = i
                         break
-                    inner_hi = max(inner_hi, h[t - i])
+                    inner = max(inner, h[t - i])
                     if l[t - i] < lowest:
                         lowest, low_off = l[t - i], i
-                    if (lip - lowest) / lip * 100 > p["cupMaxDepth"]:
+                    if (lip - lowest) / lip * 100 > self.cupEff:
                         break
                 if l_off > 0:
                     L = h[t - l_off]
-                    max_off = min(l_off + 10, r_off + p["cupMaxLen"])
-                    for j in range(l_off + 1, max_off + 1):
+                    for j in range(l_off + 1, min(l_off + self.slide, r_off + self.cMx) + 1):
                         if h[t - j] > L:
                             L, l_off = h[t - j], j
                     depth = (L - lowest) / L * 100
-                    right_ok = L * (1 - p["lipTol"] / 100) <= R <= L * (1 + p["lipTol"] / 100) and inner_hi <= max(L, R)
+                    right_ok = L * (1 - p["lipTol"] / 100) <= R <= L * (1 + p["lipTol"] / 100) and inner <= max(L, R)
                     upper_ok = (not p["hUpperHalf"]) or h_low >= lowest + 0.5 * (L - lowest)
-                    vol_ok = (not p["hVolDry"]) or h_avg_vol < avg_vol[t]
-                    p_low = prior_low(t, l_off)
-                    adv_ok = (L - p_low) / p_low * 100 >= p["priorAdv"]
-                    if (l_off - r_off >= p["cupMinLen"] and p["cupMinDepth"] <= depth <= p["cupMaxDepth"] and right_ok
-                            and h_depth <= p["hMaxDepth"] and upper_ok and vol_ok and adv_ok and c[t] < R + p["pivotAdd"]):
-                        cup = {"pivot": R + p["pivotAdd"], "inval": lowest + 0.5 * (L - lowest)}
+                    vol_ok = (not p["hVolDry"]) or h_avg < self.avgV[t]
+                    p_low = self._plow(t, l_off)
+                    if (l_off - r_off >= self.cMin and p["cupMinDepth"] <= depth <= self.cupEff and right_ok
+                            and (R - h_low) / R * 100 <= p["hMaxDepth"] and upper_ok and vol_ok
+                            and (L - p_low) / p_low * 100 >= p["priorAdv"] and c[t] < R + p["pivotAdd"]):
+                        return {"code": 1, "type": "Cup with Handle", "pivot": R + p["pivotAdd"],
+                                "inval": lowest + 0.5 * (L - lowest), "deep": depth > p["cupMaxDepth"],
+                                "start": T[t - l_off], "depth": depth}
 
-        # ── double bottom (swing lows confirmed k bars later, like ta.pivotlow)
-        if t >= 2 * k:
-            ctr = t - k
-            if l[ctr] < l[ctr - k:ctr].min() and l[ctr] <= l[ctr + 1:t + 1].min():
-                sl_val.append(l[ctr]); sl_bar.append(ctr)
-                if len(sl_val) > 12:
-                    sl_val.pop(0); sl_bar.pop(0)
-        db = None
-        ns = len(sl_val)
-        if ns >= 2 and t > p["dbMaxSpan"] + p["dbLeftLook"] + 70:
-            s2v, s2b = sl_val[-1], sl_bar[-1]
+        # double bottom
+        ns = len(self.sv)
+        if p.get("useDb", True) and ns >= 2 and t > self.span + self.look + self.plb + 10:
+            s2v, s2b = self.sv[-1], self.sb[-1]
             o2 = t - s2b
-            if o2 <= 30 and c[t] > s2v:
+            if o2 <= self.recent and c[t] > s2v:
                 for j in range(ns - 2, max(0, ns - 8) - 1, -1):
-                    s1v, s1b = sl_val[j], sl_bar[j]
+                    s1v, s1b = self.sv[j], self.sb[j]
                     o1 = t - s1b
-                    if s2b - s1b < p["dbMinGap"] or o1 > p["dbMaxSpan"]:
+                    if s2b - s1b < self.gap or o1 > self.span:
                         continue
                     tol_ok = s1v * (1 - p["dbUnder"] / 100) <= s2v <= s1v * (1 + p["dbOver"] / 100)
-                    mid = h[t - o1 + 1:t - o2]                  # bars strictly between the lows
-                    M = mid.max()
+                    M = h[t - o1 + 1:t - o2].max()
                     low_between = l[t - o1 + 1:t - o2].min()
-                    left = h[t - o1 - p["dbLeftLook"]:t - o1]
+                    left = h[t - o1 - self.look:t - o1]
                     H0 = left.max()
                     h0_off = o1 + (len(left) - int(np.argmax(left)))
                     hi_since = h[t - o2 + 1:t + 1].max()
                     lows = min(s1v, s2v)
                     depth = (H0 - lows) / H0 * 100
-                    p_low = prior_low(t, h0_off)
-                    adv_ok = (H0 - p_low) / p_low * 100 >= p["priorAdv"]
+                    p_low = self._plow(t, h0_off)
                     if (tol_ok and low_between >= lows and M >= max(s1v, s2v) * (1 + p["dbMinMid"] / 100) and M < H0
-                            and p["dbMinDepth"] <= depth <= p["dbMaxDepth"] and h0_off >= p["dbMinLen"] and adv_ok
-                            and hi_since < M + p["pivotAdd"]):
-                        db = {"pivot": M + p["pivotAdd"], "inval": lows}
-                        break
+                            and p["dbMinDepth"] <= depth <= self.dbEff and h0_off >= self.dLen
+                            and (H0 - p_low) / p_low * 100 >= p["priorAdv"] and hi_since < M + p["pivotAdd"]):
+                        return {"code": 2, "type": "Double Bottom", "pivot": M + p["pivotAdd"], "inval": lows,
+                                "deep": depth > p["dbMaxDepth"], "start": T[t - h0_off], "depth": depth}
 
-        # ── flat base
-        flat = None
-        max_back = min(p["flatMaxLen"] - 1, t - last_end_bar - 1)
-        if t > p["flatMaxLen"] + 70 and max_back >= p["flatMinLen"] - 1:
+        # cup without handle
+        if p.get("useNoHandle", True):
+            win = h[t - self.cMx:t + 1]
+            nh_off = int(np.argmax(win[::-1]))
+            if nh_off >= self.cMin:
+                Ln = h[t - nh_off]
+                seg = l[t - nh_off + 1:t + 1][::-1]                  # offsets 0 .. nh_off-1
+                lo_off = int(np.argmin(seg))
+                lo = seg[lo_off]
+                depth = (Ln - lo) / Ln * 100
+                p_low = self._plow(t, nh_off)
+                if (p["cupMinDepth"] <= depth <= self.cupEff and (c[t] - lo) / (Ln - lo) >= 0.75
+                        and c[t] < Ln + p["pivotAdd"] and lo_off >= self.side and nh_off - lo_off >= self.side
+                        and (Ln - p_low) / p_low * 100 >= p["priorAdv"]):
+                    return {"code": 3, "type": "Cup w/o Handle", "pivot": Ln + p["pivotAdd"],
+                            "inval": lo + 0.5 * (Ln - lo), "deep": depth > p["cupMaxDepth"],
+                            "start": T[t - nh_off], "depth": depth}
+
+        # flat base
+        f_lim = self.fMx - 1 if self.w else flat_limit
+        if p.get("useFlat", True) and f_lim is not None and f_lim >= self.fMin - 1:
             hh, hh_off, ll, win_end = h[t], 0, l[t], 0
-            for i in range(1, max_back + 1):
+            for i in range(1, f_lim + 1):
                 nh, nl = max(hh, h[t - i]), min(ll, l[t - i])
                 if (nh - nl) / nh * 100 > p["flatMaxDepth"]:
                     break
@@ -147,32 +175,68 @@ def detect(df, p):
                     start_off = i
                     break
             f_len = start_off + 1
-            if f_len >= p["flatMinLen"] and hh_off >= p["flatHighAge"]:
+            if f_len >= self.fMin and hh_off >= self.fAge:
                 half = f_len // 2
-                seg = c[t - start_off:t + 1][::-1]               # offset 0 first
+                seg = c[t - start_off:t + 1][::-1]
                 drift = abs(seg[:half].mean() / seg[half:].mean() - 1) * 100
-                p_low = prior_low(t, start_off)
+                p_low = self._plow(t, start_off)
                 if drift <= p["flatSlopeMax"] and (hh - p_low) / p_low * 100 >= p["priorAdv"] and c[t] < hh + p["pivotAdd"]:
-                    flat = {"pivot": hh + p["pivotAdd"], "inval": hh * (1 - p["flatMaxDepth"] / 100)}
+                    return {"code": 4, "type": "Flat Base", "pivot": hh + p["pivotAdd"],
+                            "inval": hh * (1 - p["flatMaxDepth"] / 100), "deep": False,
+                            "start": T[t - start_off], "depth": (hh - ll) / hh * 100}
+        return None
 
-        # ── state machine
+
+def weekly_bars(df):
+    """Daily → weekly OHLCV (weeks labelled by their Monday, like TradingView)."""
+    w = df.resample("W-FRI").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}).dropna()
+    w.index = w.index - pd.Timedelta(days=4)
+    return w
+
+
+def detect(df, p, timeframe="Weekly"):
+    """Base state machine over a DAILY frame; bases come from `timeframe` bars. Returns (state, events)."""
+    h, c, v = (df[k].to_numpy(float) for k in ("High", "Close", "Volume"))
+    n, dates = len(df), df.index
+    avg_vol = pd.Series(v).rolling(50).mean().to_numpy()
+    sma200 = pd.Series(c).rolling(200).mean().to_numpy()
+
+    weekly = timeframe == "Weekly"
+    if weekly:                                                   # candidate of the last COMPLETED week, per daily bar
+        wk = weekly_bars(df)
+        ws = Scanner(wk, p, True)
+        wc = [ws.step(i) for i in range(len(wk))]
+        wpos = np.searchsorted(wk.index.values, dates.values, side="right") - 2    # week before the current one
+    else:
+        ds = Scanner(df, p, False)
+
+    st = {"type": "", "pivot": np.nan, "inval": np.nan, "bar": None, "crossed": False, "weak": False,
+          "attempts": 0, "tag": ""}
+    last_end_bar, last_end_time, last_end_piv = 0, pd.Timestamp(0), np.nan
+    events = []
+    for t in range(n):
+        if weekly:
+            cand = wc[wpos[t]] if wpos[t] >= 0 else None
+        else:
+            cand = ds.step(t, min(p["flatMaxLen"] - 1, t - last_end_bar - 1))
+        trend_ok = (not p["trendFilter"]) or (not np.isnan(sma200[t]) and c[t] > sma200[t])
+
         ev_piv = np.nan
+        label = st["type"] + st["tag"]
         if st["type"]:
             if c[t] > st["pivot"]:
                 in_zone = c[t] <= st["pivot"] * (1 + p["buyZonePct"] / 100)
                 st["crossed"] = True
                 ev_piv = st["pivot"]
+                vr = v[t] / avg_vol[t - 1]
                 if in_zone and v[t] >= p["volMult"] * avg_vol[t - 1]:
-                    events.append((dates[t], "BUY", st["type"], st["pivot"], v[t] / avg_vol[t - 1]))
-                    st["type"] = ""
+                    events.append((dates[t], "BUY", label, st["pivot"], vr)); st["type"] = ""
                 elif not in_zone:
-                    events.append((dates[t], "EXT", st["type"], st["pivot"], v[t] / avg_vol[t - 1]))
-                    st["type"] = ""
+                    events.append((dates[t], "EXT", label, st["pivot"], vr)); st["type"] = ""
                 elif not st["weak"]:
-                    events.append((dates[t], "BO?", st["type"], st["pivot"], v[t] / avg_vol[t - 1]))
-                    st["weak"] = True
+                    events.append((dates[t], "BO?", label, st["pivot"], vr)); st["weak"] = True
             elif c[t] < st["inval"] or t - st["bar"] > p["actMaxBars"]:
-                events.append((dates[t], "FAILED" if c[t] < st["inval"] else "RETIRED", st["type"], st["pivot"], None))
+                events.append((dates[t], "FAILED" if c[t] < st["inval"] else "RETIRED", label, st["pivot"], None))
                 st["type"] = ""
             elif h[t] > st["pivot"]:
                 st["crossed"] = True
@@ -180,16 +244,16 @@ def detect(df, p):
             if not st["type"]:
                 last_end_piv = ev_piv if not np.isnan(ev_piv) else st["pivot"]
                 st["pivot"] = np.nan
-                last_end_bar = t
+                last_end_bar, last_end_time = t, dates[t]
 
-        cand = cup and ("Cup with Handle", cup) or db and ("Double Bottom", db) or flat and ("Flat Base", flat)
-        if cand:
-            same = (not np.isnan(last_end_piv) and abs(cand[1]["pivot"] / last_end_piv - 1) < 0.01
-                    and t - last_end_bar < 15)
-            if not st["type"] and last_end_bar != t and trend_ok and not same:
-                st.update(type=cand[0], pivot=cand[1]["pivot"], inval=cand[1]["inval"], bar=t,
-                          crossed=False, weak=False, attempts=0)
-                events.append((dates[t], "DETECTED", cand[0], cand[1]["pivot"], None))
+        cand_ok = cand is not None and c[t] < cand["pivot"] and (cand["code"] != 4 or cand["start"] > last_end_time)
+        same = (cand_ok and not np.isnan(last_end_piv) and abs(cand["pivot"] / last_end_piv - 1) < 0.01
+                and t - last_end_bar < 15)
+        if not st["type"] and last_end_bar != t and trend_ok and cand_ok and not same:
+            tag = (" DEEP" if cand["deep"] else "") + (" (W)" if weekly else " (D)")
+            st.update(type=cand["type"], tag=tag, pivot=cand["pivot"], inval=cand["inval"], bar=t,
+                      crossed=False, weak=False, attempts=0)
+            events.append((dates[t], "DETECTED", cand["type"] + tag, cand["pivot"], None))
 
     st["days"] = (n - 1 - st["bar"]) if st["type"] else None
     return st, events
@@ -198,7 +262,7 @@ def detect(df, p):
 # ── Status table ──────────────────────────────────────────────────────────────
 
 def status_row(tkr, df, p):
-    st, events = detect(df, p)
+    st, events = detect(df, p, p.get("timeframe", "Weekly"))
     c, h = df["Close"].to_numpy(float), df["High"].to_numpy(float)
     close = c[-1]
     vol_ratio = df["Volume"].iloc[-1] / df["Volume"].iloc[-51:-1].mean()
@@ -218,7 +282,7 @@ def status_row(tkr, df, p):
             status, note = "Near pivot", f"Within {p['nearPct']:g}% of the buy point — watch for a volume breakout"
         else:
             status, note = "In base", "Base forming — wait for price to approach the buy point"
-        row.update({"Status": status, "Base": st["type"], "Pivot (Buy Point)": round(piv, 2),
+        row.update({"Status": status, "Base": st["type"] + st["tag"], "Pivot (Buy Point)": round(piv, 2),
                     "Buy Zone Top": round(piv * (1 + p["buyZonePct"] / 100), 2), "% vs Pivot": round(vs, 1),
                     "Days in Base": st["days"], "Attempts Above Pivot": st["attempts"], "Note": note})
     else:

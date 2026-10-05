@@ -1,267 +1,340 @@
 //@version=6
-// CAN SLIM Base & Pivot Alerts — v2
-// v2.4: green "BUY <pivot>" label on volume-confirmed breakouts; buy zone (pivot → +5%) shaded.
-// v2.3: a cup's interior can't trade above its rims (rejects "cups" that contain a higher peak)
-// v2.2: intraday pivot-cross alert and "BO?" fire once per base; "EXT" marks a base left behind
-//       by a close beyond the buy zone without volume confirmation.
-// Detects O'Neil-style Cup-with-Handle, Double Bottom and Flat Base patterns on DAILY charts,
-// freezes the pivot (buy point) once a base is found, and fires alerts for:
-//   1. New base detected      2. Price within X% of pivot
-//   3. Price crossing pivot (intraday)   4. Volume-confirmed breakout (at close)
-// v2: flat bases must be sideways (high >= N bars old, flat first/second half), pivot is frozen
-//     while a base is active (intraday pokes above it are "attempts"), one label per base,
-//     and double-bottom detection.
-// Pattern detection is heuristic -- always confirm the chart by eye.
-indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM", overlay = true, max_bars_back = 600, max_lines_count = 400, max_boxes_count = 100, max_labels_count = 200)
+// CAN SLIM Base & Pivot Alerts — v3
+// O'Neil workflow: find the base on WEEKLY bars, time the breakout on DAILY bars.
+//   • "Find bases on" = Weekly (default): patterns are measured on completed weekly bars (no repaint);
+//     buy point, buy zone, volume confirmation, BUY / BO? / EXT / failed marks and alerts run on daily bars.
+//   • "Find bases on" = Daily: the original daily-bar detection (v2.x behaviour).
+// Patterns: cup with handle, cup without handle, double bottom, flat base. Cups / double bottoms deeper
+// than the normal limit (35% / 40%) are accepted up to "Deep base max depth" and labelled DEEP.
+// Pivot is frozen while a base is active; one label per base. Lengths are entered in DAILY bars and
+// scaled to weeks (÷5) for weekly detection. Pattern detection is heuristic — confirm the chart by eye.
+// v3.0: weekly detection + daily timing, cup without handle, DEEP bases.
+// v2.4: BUY label + shaded buy zone · v2.3: cup interior can't exceed its rims · v2.2: one cross alert /
+//       one BO? per base, EXT marker · v2.0: sideways flat bases, frozen pivot, double bottoms.
+indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM", overlay = true, max_bars_back = 600, max_lines_count = 400, max_boxes_count = 100, max_labels_count = 300)
 
 // ── Inputs ────────────────────────────────────────────────────────────────
-grpCup      = "Cup with Handle"
+grpMode     = "Mode"
+baseTf      = input.string("Weekly", "Find bases on", options = ["Weekly", "Daily"], group = grpMode, tooltip = "O'Neil reads bases on weekly charts and times the buy on daily. Weekly: bases from completed weekly bars; breakouts, volume and alerts on daily bars.")
+
+grpCup      = "Cup"
 useCup      = input.bool(true, "Detect cups with handle", group = grpCup)
-cupMinLen   = input.int(35, "Cup min length (bars)", minval = 10, maxval = 450, group = grpCup, tooltip = "35 daily bars ≈ 7 weeks")
-cupMaxLen   = input.int(325, "Cup max length (bars)", minval = 20, maxval = 450, group = grpCup, tooltip = "325 daily bars ≈ 65 weeks")
+useNoHandle = input.bool(true, "Detect cups without handle", group = grpCup, tooltip = "Pivot = left-side high + $0.10. Detected once the right side has recovered 75% of the cup.")
+cupMinLen   = input.int(35, "Cup min length (daily bars)", minval = 10, maxval = 450, group = grpCup, tooltip = "35 daily bars ≈ 7 weeks")
+cupMaxLen   = input.int(325, "Cup max length (daily bars)", minval = 20, maxval = 450, group = grpCup, tooltip = "325 daily bars ≈ 65 weeks")
 cupMinDepth = input.float(12.0, "Cup min depth %", group = grpCup)
-cupMaxDepth = input.float(35.0, "Cup max depth %", group = grpCup)
+cupMaxDepth = input.float(35.0, "Cup max depth % (normal)", group = grpCup)
 lipTol      = input.float(5.0, "Right-side high within % of left lip", group = grpCup)
-hMinLen     = input.int(5, "Handle min length (bars)", minval = 1, maxval = 40, group = grpCup)
-hMaxLen     = input.int(25, "Handle max length (bars)", minval = 2, maxval = 40, group = grpCup)
+hMinLen     = input.int(5, "Handle min length (daily bars)", minval = 1, maxval = 40, group = grpCup)
+hMaxLen     = input.int(25, "Handle max length (daily bars)", minval = 2, maxval = 40, group = grpCup)
 hMaxDepth   = input.float(12.0, "Handle max depth %", group = grpCup)
 hUpperHalf  = input.bool(true, "Handle must be in upper half of cup", group = grpCup)
-hVolDry     = input.bool(true, "Handle avg volume below 50-day avg", group = grpCup)
+hVolDry     = input.bool(true, "Handle avg volume below average", group = grpCup)
 
 grpDb       = "Double Bottom"
 useDb       = input.bool(true, "Detect double bottoms", group = grpDb)
-dbK         = input.int(5, "Swing-low strength (bars each side)", minval = 2, maxval = 10, group = grpDb)
-dbMinGap    = input.int(10, "Min bars between the two lows", minval = 5, group = grpDb)
-dbMaxSpan   = input.int(250, "Max bars back to the first low", minval = 30, maxval = 300, group = grpDb)
+dbK         = input.int(5, "Swing-low strength (daily bars each side)", minval = 2, maxval = 10, group = grpDb)
+dbMinGap    = input.int(10, "Min daily bars between the two lows", minval = 5, group = grpDb)
+dbMaxSpan   = input.int(250, "Max daily bars back to the first low", minval = 30, maxval = 300, group = grpDb)
 dbUnder     = input.float(5.0, "2nd low may undercut 1st by up to %", group = grpDb)
 dbOver      = input.float(3.0, "2nd low may sit above 1st by up to %", group = grpDb)
 dbMinMid    = input.float(8.0, "Middle peak at least % above the lows", group = grpDb)
 dbMinDepth  = input.float(12.0, "Base min depth %", group = grpDb)
-dbMaxDepth  = input.float(40.0, "Base max depth %", group = grpDb)
-dbMinLen    = input.int(35, "Base min length (bars from left high)", group = grpDb)
-dbLeftLook  = input.int(150, "Bars before 1st low to find the left high", minval = 20, maxval = 150, group = grpDb)
+dbMaxDepth  = input.float(40.0, "Base max depth % (normal)", group = grpDb)
+dbMinLen    = input.int(35, "Base min length (daily bars from left high)", group = grpDb)
+dbLeftLook  = input.int(150, "Daily bars before 1st low to find the left high", minval = 20, maxval = 150, group = grpDb)
 
 grpFlat      = "Flat Base"
 useFlat      = input.bool(true, "Detect flat bases", group = grpFlat)
-flatMinLen   = input.int(25, "Flat base min length (bars)", minval = 10, group = grpFlat, tooltip = "25 daily bars ≈ 5 weeks")
-flatMaxLen   = input.int(100, "Flat base max length (bars)", minval = 15, maxval = 400, group = grpFlat)
+flatMinLen   = input.int(25, "Flat base min length (daily bars)", minval = 10, group = grpFlat, tooltip = "25 daily bars ≈ 5 weeks")
+flatMaxLen   = input.int(100, "Flat base max length (daily bars)", minval = 15, maxval = 400, group = grpFlat)
 flatMaxDepth = input.float(15.0, "Flat base max depth %", group = grpFlat)
-flatHighAge  = input.int(10, "Base high must be at least N bars old", minval = 0, group = grpFlat, tooltip = "Stops flagging a 'base' while the stock is still making new highs")
-flatSlopeMax = input.float(4.0, "Max drift: 2nd-half vs 1st-half avg close %", group = grpFlat, tooltip = "Rejects windows that are trending up or down rather than moving sideways")
+flatHighAge  = input.int(10, "Base high must be at least N daily bars old", minval = 0, group = grpFlat)
+flatSlopeMax = input.float(4.0, "Max drift: 2nd-half vs 1st-half avg close %", group = grpFlat)
 flatNearTop  = input.float(5.0, "Base starts at first bar within % of base high", group = grpFlat)
 
 grpGen      = "Filters & Breakout"
-priorAdv    = input.float(20.0, "Min prior uptrend into base %", group = grpGen, tooltip = "Rise from the 3-month low before the base to the base high. O'Neil prefers 30%+ for cups.")
+allowDeep   = input.bool(true, "Allow deep cups / double bottoms (labelled DEEP)", group = grpGen)
+deepMax     = input.float(50.0, "Deep base max depth %", group = grpGen)
+priorAdv    = input.float(20.0, "Min prior uptrend into base %", group = grpGen, tooltip = "Rise from the 3-month low before the base to the base high.")
 trendFilter = input.bool(true, "Require close above 200-day SMA", group = grpGen)
 nearPct     = input.float(3.0, "'Near pivot' zone: % below pivot", group = grpGen)
 volMult     = input.float(1.4, "Breakout volume ≥ x × 50-day avg", group = grpGen)
 buyZonePct  = input.float(5.0, "Buy zone: % above pivot", group = grpGen)
 pivotAdd    = input.float(0.10, "Pivot = base high + $", group = grpGen)
-actMaxBars  = input.int(65, "Retire a base after N bars without breakout", minval = 10, group = grpGen)
+actMaxBars  = input.int(65, "Retire a base after N daily bars without breakout", minval = 10, group = grpGen)
 
-// ── Common series ─────────────────────────────────────────────────────────
+// ── Common series (daily) ─────────────────────────────────────────────────
 avgVol  = ta.sma(volume, 50)
 sma200  = ta.sma(close, 200)
 trendOk = not trendFilter or close > sma200
-
-priorLowBefore(int off) =>
-    float m = low[off]
-    for i = off + 1 to off + 63
-        m := math.min(m, low[i])
-    m
+isWk    = baseTf == "Weekly"
 
 // Active-base state (the pivot is frozen while a base is active)
-var string actType    = ""
-var float  actPivot   = na
-var float  actInval   = na
-var int    actBar     = na
-var bool   actCrossed = false     // pivot already crossed (intraday or close) during this base
-var bool   actWeak    = false     // "BO?" already shown for this base
-var box    actBox     = na
-var int    lastEndBar = 0
-var float  lastEndPiv = na
+var string actType     = ""
+var string actTag      = ""
+var float  actPivot    = na
+var float  actInval    = na
+var int    actBar      = na
+var bool   actCrossed  = false
+var bool   actWeak     = false
+var box    actBox      = na
+var int    lastEndBar  = 0
+var int    lastEndTime = 0
+var float  lastEndPiv  = na
 
-// ── Candidate: Cup with Handle ────────────────────────────────────────────
-rOff = -ta.highestbars(high, hMaxLen + 1)   // bars since right-side high (handle start)
-R    = high[rOff]
+// daily-bar length → weekly-bar length
+sc(int x, bool isW, int lo) => isW ? math.max(lo, math.round(x / 5.0)) : x
 
-cupOk     = false
-cupPivot  = float(na)
-cupL      = float(na)
-cupLow    = float(na)
-cupLOff   = int(na)
-cupLowOff = int(na)
-
-if useCup and bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
-    hLow    = low
-    hVolSum = 0.0
-    for k = 0 to rOff - 1
-        hLow    := math.min(hLow, low[k])
-        hVolSum += volume[k]
-    hDepth  = (R - hLow) / R * 100
-    hAvgVol = hVolSum / rOff
-
-    // Walk left from the right-side high: must dip >= min depth, then recover to the left lip
-    lipLevel = R * (1 - lipTol / 100)
-    lowest   = R
-    lowOff   = rOff
-    lOff     = -1
-    innerHi  = 0.0                                       // highest high inside the cup (between the rims)
-    for i = rOff + 1 to rOff + cupMaxLen
-        if (R - lowest) / R * 100 >= cupMinDepth and high[i] >= lipLevel
-            lOff := i
-            break
-        innerHi := math.max(innerHi, high[i])
-        if low[i] < lowest
-            lowest := low[i]
-            lowOff := i
-        if (lipLevel - lowest) / lipLevel * 100 > cupMaxDepth
-            break
-
-    if lOff > 0
-        L      = high[lOff]
-        maxOff = math.min(lOff + 10, rOff + cupMaxLen)
-        if maxOff > lOff
-            for j = lOff + 1 to maxOff
-                if high[j] > L
-                    L    := high[j]
-                    lOff := j
-        cupLen  = lOff - rOff
-        depth   = (L - lowest) / L * 100
-        rightOk = R >= L * (1 - lipTol / 100) and R <= L * (1 + lipTol / 100) and innerHi <= math.max(L, R)
-        upperOk = not hUpperHalf or hLow >= lowest + 0.5 * (L - lowest)
-        volOk   = not hVolDry or hAvgVol < avgVol
-        pLow    = priorLowBefore(lOff)
-        advOk   = (L - pLow) / pLow * 100 >= priorAdv
-        if cupLen >= cupMinLen and depth >= cupMinDepth and depth <= cupMaxDepth and rightOk and hDepth <= hMaxDepth and upperOk and volOk and advOk and close < R + pivotAdd
-            cupOk     := true
-            cupPivot  := R + pivotAdd
-            cupL      := L
-            cupLow    := lowest
-            cupLOff   := lOff
-            cupLowOff := lowOff
-
-// ── Candidate: Double Bottom ──────────────────────────────────────────────
-var array<float> slVal = array.new<float>()
-var array<int>   slBar = array.new<int>()
-pl = ta.pivotlow(low, dbK, dbK)
-if not na(pl)
-    array.push(slVal, pl)
-    array.push(slBar, bar_index - dbK)
-    if array.size(slVal) > 12
-        array.shift(slVal)
-        array.shift(slBar)
-
-dbOk    = false
-dbPivot = float(na)
-dbH0    = float(na)
-dbM     = float(na)
-dbS1    = float(na)
-dbS2    = float(na)
-dbH0Bar = int(na)
-dbMBar  = int(na)
-dbS1Bar = int(na)
-dbS2Bar = int(na)
-
-n = array.size(slVal)
-if useDb and n >= 2 and bar_index > dbMaxSpan + dbLeftLook + 70
-    s2v = array.get(slVal, n - 1)
-    s2b = array.get(slBar, n - 1)
-    o2  = bar_index - s2b
-    if o2 <= 30 and close > s2v
-        for j = n - 2 to math.max(0, n - 8)
-            s1v = array.get(slVal, j)
-            s1b = array.get(slBar, j)
-            o1  = bar_index - s1b
-            if s2b - s1b >= dbMinGap and o1 <= dbMaxSpan
-                tolOk = s2v >= s1v * (1 - dbUnder / 100) and s2v <= s1v * (1 + dbOver / 100)
-                M     = high[o2 + 1]
-                mOff  = o2 + 1
-                lowBetween = low[o2 + 1]
-                for k = o2 + 1 to o1 - 1
-                    if high[k] > M
-                        M    := high[k]
-                        mOff := k
-                    lowBetween := math.min(lowBetween, low[k])
-                H0    = high[o1 + 1]
-                h0Off = o1 + 1
-                for k = o1 + 1 to o1 + dbLeftLook
-                    if high[k] > H0
-                        H0    := high[k]
-                        h0Off := k
-                hiSince = high
-                for k = 0 to o2 - 1
-                    hiSince := math.max(hiSince, high[k])
-                lows  = math.min(s1v, s2v)
-                depth = (H0 - lows) / H0 * 100
-                pLow  = priorLowBefore(h0Off)
-                advOk = (H0 - pLow) / pLow * 100 >= priorAdv
-                if tolOk and lowBetween >= lows and M >= math.max(s1v, s2v) * (1 + dbMinMid / 100) and M < H0 and depth >= dbMinDepth and depth <= dbMaxDepth and h0Off >= dbMinLen and advOk and hiSince < M + pivotAdd
-                    dbOk    := true
-                    dbPivot := M + pivotAdd
-                    dbH0    := H0
-                    dbM     := M
-                    dbS1    := s1v
-                    dbS2    := s2v
-                    dbH0Bar := bar_index - h0Off
-                    dbMBar  := bar_index - mOff
-                    dbS1Bar := s1b
-                    dbS2Bar := s2b
+// ── Base scan on the calling timeframe ───────────────────────────────────
+// code: 0 none · 1 cup with handle · 2 double bottom · 3 cup without handle · 4 flat base
+// returns [code, pivot, invalidation, deep, start time, A time, A price, B time, B price, C time, C price, D time, D price]
+detect(bool isW, bool enabled, int flatLimit) =>
+    cMin   = sc(cupMinLen, isW, 2)
+    cMx    = sc(cupMaxLen, isW, 10)
+    hMn    = sc(hMinLen, isW, 1)
+    hMx    = sc(hMaxLen, isW, 2)
+    k      = sc(dbK, isW, 2)
+    gap    = sc(dbMinGap, isW, 2)
+    span   = sc(dbMaxSpan, isW, 10)
+    look   = sc(dbLeftLook, isW, 5)
+    dLen   = sc(dbMinLen, isW, 2)
+    fMin   = sc(flatMinLen, isW, 2)
+    fMx    = sc(flatMaxLen, isW, 5)
+    fAge   = sc(flatHighAge, isW, 1)
+    plb    = isW ? 13 : 63
+    side   = isW ? 2 : 10
+    slide  = isW ? 2 : 10
+    recent = isW ? 6 : 30
+    cupEff = allowDeep ? math.max(cupMaxDepth, deepMax) : cupMaxDepth
+    dbEff  = allowDeep ? math.max(dbMaxDepth, deepMax) : dbMaxDepth
+    avgV   = ta.sma(volume, isW ? 10 : 50)
+    rOff   = -ta.highestbars(high, hMx + 1)
+    nhOff  = -ta.highestbars(high, cMx + 1)
+    pl     = ta.pivotlow(low, k, k)
+    var array<float> sv = array.new<float>()
+    var array<int>   sb = array.new<int>()
+    if not na(pl)
+        array.push(sv, pl)
+        array.push(sb, bar_index - k)
+        if array.size(sv) > 12
+            array.shift(sv)
+            array.shift(sb)
+    int   code = 0
+    float piv  = na
+    float inv  = na
+    bool  deep = false
+    int   stT  = na
+    int   tA   = na
+    float pA   = na
+    int   tB   = na
+    float pB   = na
+    int   tC   = na
+    float pC   = na
+    int   tD   = na
+    float pD   = na
+    if enabled and bar_index > cMx + hMx + plb + 20
+        // Cup with handle: right-side high at rOff, handle since then
+        if useCup and rOff >= hMn and rOff <= hMx
+            R       = high[rOff]
+            hLow    = low
+            hVolSum = 0.0
+            for j = 0 to rOff - 1
+                hLow    := math.min(hLow, low[j])
+                hVolSum += volume[j]
+            hDepth   = (R - hLow) / R * 100
+            lipLevel = R * (1 - lipTol / 100)
+            lowest   = R
+            lowOff   = rOff
+            lOff     = -1
+            innerHi  = 0.0
+            for i = rOff + 1 to rOff + cMx
+                if (R - lowest) / R * 100 >= cupMinDepth and high[i] >= lipLevel
+                    lOff := i
                     break
+                innerHi := math.max(innerHi, high[i])
+                if low[i] < lowest
+                    lowest := low[i]
+                    lowOff := i
+                if (lipLevel - lowest) / lipLevel * 100 > cupEff
+                    break
+            if lOff > 0
+                L      = high[lOff]
+                maxOff = math.min(lOff + slide, rOff + cMx)
+                if maxOff > lOff
+                    for j = lOff + 1 to maxOff
+                        if high[j] > L
+                            L    := high[j]
+                            lOff := j
+                depth   = (L - lowest) / L * 100
+                rightOk = R >= L * (1 - lipTol / 100) and R <= L * (1 + lipTol / 100) and innerHi <= math.max(L, R)
+                upperOk = not hUpperHalf or hLow >= lowest + 0.5 * (L - lowest)
+                volOk   = not hVolDry or hVolSum / rOff < avgV
+                pLow    = low[lOff]
+                for j = lOff + 1 to lOff + plb
+                    pLow := math.min(pLow, low[j])
+                if lOff - rOff >= cMin and depth >= cupMinDepth and depth <= cupEff and rightOk and hDepth <= hMaxDepth and upperOk and volOk and (L - pLow) / pLow * 100 >= priorAdv and close < R + pivotAdd
+                    code := 1
+                    piv  := R + pivotAdd
+                    inv  := lowest + 0.5 * (L - lowest)        // handle falling into the lower half kills the cup
+                    deep := depth > cupMaxDepth
+                    stT  := time[lOff]
+                    tA   := time[lOff]
+                    pA   := L
+                    tB   := time[lowOff]
+                    pB   := lowest
+                    tC   := time[rOff]
+                    pC   := R
 
-// ── Candidate: Flat Base ──────────────────────────────────────────────────
-flatOk    = false
-flatPivot = float(na)
-flatLen   = 0
-flatHH    = float(na)
-flatLL    = float(na)
-flatHOff  = 0
+        // Double bottom: last two swing lows, pivot = middle peak
+        n = array.size(sv)
+        if code == 0 and useDb and n >= 2 and bar_index > span + look + plb + 10
+            s2v = array.get(sv, n - 1)
+            s2b = array.get(sb, n - 1)
+            o2  = bar_index - s2b
+            if o2 <= recent and close > s2v
+                for j = n - 2 to math.max(0, n - 8)
+                    s1v = array.get(sv, j)
+                    s1b = array.get(sb, j)
+                    o1  = bar_index - s1b
+                    if s2b - s1b >= gap and o1 <= span
+                        tolOk      = s2v >= s1v * (1 - dbUnder / 100) and s2v <= s1v * (1 + dbOver / 100)
+                        M          = high[o2 + 1]
+                        mOff       = o2 + 1
+                        lowBetween = low[o2 + 1]
+                        for q = o2 + 1 to o1 - 1
+                            if high[q] > M
+                                M    := high[q]
+                                mOff := q
+                            lowBetween := math.min(lowBetween, low[q])
+                        H0    = high[o1 + 1]
+                        h0Off = o1 + 1
+                        for q = o1 + 1 to o1 + look
+                            if high[q] > H0
+                                H0    := high[q]
+                                h0Off := q
+                        hiSince = high
+                        for q = 0 to o2 - 1
+                            hiSince := math.max(hiSince, high[q])
+                        lows   = math.min(s1v, s2v)
+                        dDepth = (H0 - lows) / H0 * 100
+                        pLowD  = low[h0Off]
+                        for q = h0Off + 1 to h0Off + plb
+                            pLowD := math.min(pLowD, low[q])
+                        if tolOk and lowBetween >= lows and M >= math.max(s1v, s2v) * (1 + dbMinMid / 100) and M < H0 and dDepth >= dbMinDepth and dDepth <= dbEff and h0Off >= dLen and (H0 - pLowD) / pLowD * 100 >= priorAdv and hiSince < M + pivotAdd
+                            code := 2
+                            piv  := M + pivotAdd
+                            inv  := lows
+                            deep := dDepth > dbMaxDepth
+                            stT  := time[h0Off]
+                            tA   := time[h0Off]
+                            pA   := H0
+                            tB   := time[o1]
+                            pB   := s1v
+                            tC   := time[mOff]
+                            pC   := M
+                            tD   := time[o2]
+                            pD   := s2v
+                            break
 
-maxBack = math.min(flatMaxLen - 1, bar_index - lastEndBar - 1)   // never reuse bars of a base that already ended
-if useFlat and bar_index > flatMaxLen + 70 and maxBack >= flatMinLen - 1
-    hh     = high
-    hhOff  = 0
-    ll     = low
-    winEnd = 0
-    for i = 1 to maxBack
-        nh = math.max(hh, high[i])
-        nl = math.min(ll, low[i])
-        if (nh - nl) / nh * 100 > flatMaxDepth
-            break
-        if high[i] > hh
-            hhOff := i
-        hh     := nh
-        ll     := nl
-        winEnd := i
-    // The base starts at the oldest bar in the window that traded near the base high
-    startOff = hhOff
-    for i = winEnd to hhOff
-        if high[i] >= hh * (1 - flatNearTop / 100)
-            startOff := i
-            break
-    fLen = startOff + 1
-    if fLen >= flatMinLen and hhOff >= flatHighAge
-        half   = math.floor(fLen / 2)
-        bl     = low
-        sumNew = 0.0
-        sumOld = 0.0
-        for i = 0 to startOff
-            bl := math.min(bl, low[i])
-            if i < half
-                sumNew += close[i]
-            else
-                sumOld += close[i]
-        drift = math.abs((sumNew / half) / (sumOld / (fLen - half)) - 1) * 100
-        pLow  = priorLowBefore(startOff)
-        if drift <= flatSlopeMax and (hh - pLow) / pLow * 100 >= priorAdv and close < hh + pivotAdd
-            flatOk    := true
-            flatPivot := hh + pivotAdd
-            flatHH    := hh
-            flatLL    := bl
-            flatLen   := fLen
-            flatHOff  := hhOff
+        // Cup without handle: left-side high, right side back above 75% of the cup
+        if code == 0 and useNoHandle and nhOff >= cMin
+            Ln    = high[nhOff]
+            lo    = low
+            loOff = 0
+            for q = 1 to nhOff - 1
+                if low[q] < lo
+                    lo    := low[q]
+                    loOff := q
+            nDepth = (Ln - lo) / Ln * 100
+            pLowN  = low[nhOff]
+            for q = nhOff + 1 to nhOff + plb
+                pLowN := math.min(pLowN, low[q])
+            if nDepth >= cupMinDepth and nDepth <= cupEff and (close - lo) / (Ln - lo) >= 0.75 and close < Ln + pivotAdd and loOff >= side and nhOff - loOff >= side and (Ln - pLowN) / pLowN * 100 >= priorAdv
+                code := 3
+                piv  := Ln + pivotAdd
+                inv  := lo + 0.5 * (Ln - lo)
+                deep := nDepth > cupMaxDepth
+                stT  := time[nhOff]
+                tA   := time[nhOff]
+                pA   := Ln
+                tB   := time[loOff]
+                pB   := lo
 
-// ── State machine ─────────────────────────────────────────────────────────
+        // Flat base: sideways, ≤ flatMaxDepth, high at least fAge bars old
+        fLim = isW ? fMx - 1 : flatLimit
+        if code == 0 and useFlat and fLim >= fMin - 1
+            hh     = high
+            hhOff  = 0
+            ll     = low
+            winEnd = 0
+            for i = 1 to fLim
+                nh = math.max(hh, high[i])
+                nl = math.min(ll, low[i])
+                if (nh - nl) / nh * 100 > flatMaxDepth
+                    break
+                if high[i] > hh
+                    hhOff := i
+                hh     := nh
+                ll     := nl
+                winEnd := i
+            startOff = hhOff
+            for i = winEnd to hhOff
+                if high[i] >= hh * (1 - flatNearTop / 100)
+                    startOff := i
+                    break
+            fLen = startOff + 1
+            if fLen >= fMin and hhOff >= fAge
+                half   = math.floor(fLen / 2)
+                bl     = low
+                sumNew = 0.0
+                sumOld = 0.0
+                for i = 0 to startOff
+                    bl := math.min(bl, low[i])
+                    if i < half
+                        sumNew += close[i]
+                    else
+                        sumOld += close[i]
+                drift = math.abs((sumNew / half) / (sumOld / (fLen - half)) - 1) * 100
+                pLowF = low[startOff]
+                for q = startOff + 1 to startOff + plb
+                    pLowF := math.min(pLowF, low[q])
+                if drift <= flatSlopeMax and (hh - pLowF) / pLowF * 100 >= priorAdv and close < hh + pivotAdd
+                    code := 4
+                    piv  := hh + pivotAdd
+                    inv  := hh * (1 - flatMaxDepth / 100)        // fails only if the base gets deeper than allowed
+                    stT  := time[startOff]
+                    tA   := time[startOff]
+                    pA   := hh
+                    tB   := time[startOff]
+                    pB   := bl
+                    tC   := time[hhOff]
+                    pC   := hh
+    [code, piv, inv, deep, stT, tA, pA, tB, pB, tC, pC, tD, pD]
+
+// Weekly scan, shifted to the last COMPLETED week (no repaint)
+weeklyPrev() =>
+    [c0, p0, i0, d0, s0, ta0, pa0, tb0, pb0, tc0, pc0, td0, pd0] = detect(true, isWk, 0)
+    [c0[1], p0[1], i0[1], d0[1], s0[1], ta0[1], pa0[1], tb0[1], pb0[1], tc0[1], pc0[1], td0[1], pd0[1]]
+
+[wC, wP, wI, wD, wS, wTA, wPA, wTB, wPB, wTC, wPC, wTD, wPD] = request.security(syminfo.tickerid, "W", weeklyPrev(), lookahead = barmerge.lookahead_on)
+[dC, dP, dI, dD, dS, dTA, dPA, dTB, dPB, dTC, dPC, dTD, dPD] = detect(false, not isWk, math.min(flatMaxLen - 1, bar_index - lastEndBar - 1))
+
+cC  = isWk ? nz(wC) : dC
+cP  = isWk ? wP : dP
+cI  = isWk ? wI : dI
+cD  = isWk ? wD : dD
+cS  = isWk ? wS : dS
+cTA = isWk ? wTA : dTA
+cPA = isWk ? wPA : dPA
+cTB = isWk ? wTB : dTB
+cPB = isWk ? wPB : dPB
+cTC = isWk ? wTC : dTC
+cPC = isWk ? wPC : dPC
+cTD = isWk ? wTD : dTD
+cPD = isWk ? wPD : dPD
+
+// ── State machine (daily bars) ────────────────────────────────────────────
 newBase   = false
 crossPx   = false
 volBreak  = false
@@ -278,7 +351,7 @@ if actType != ""
         crossPx    := not actCrossed                     // intraday heads-up fires once per base
         actCrossed := true
         evtPivot   := actPivot
-        evtType    := actType
+        evtType    := actType + actTag
         if inZone and volume >= volMult * avgVol[1]
             volBreak := true                             // confirmed: base is done
             actType  := ""
@@ -296,49 +369,49 @@ if actType != ""
         if attempt
             actCrossed := true
     if actType == ""
-        lastEndPiv := nz(evtPivot, actPivot)
-        actPivot   := na
-        actBox     := na
-        lastEndBar := bar_index
+        lastEndPiv  := nz(evtPivot, actPivot)
+        actPivot    := na
+        actBox      := na
+        lastEndBar  := bar_index
+        lastEndTime := time
 
-candPivot = cupOk ? cupPivot : dbOk ? dbPivot : flatPivot
-sameAsLast = not na(lastEndPiv) and math.abs(candPivot / lastEndPiv - 1) < 0.01 and bar_index - lastEndBar < 15
-if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or flatOk) and not sameAsLast
+candOk     = cC > 0 and close < cP and (cC != 4 or cS > lastEndTime)
+sameAsLast = candOk and not na(lastEndPiv) and math.abs(cP / lastEndPiv - 1) < 0.01 and bar_index - lastEndBar < 15
+if actType == "" and lastEndBar != bar_index and trendOk and candOk and not sameAsLast
     newBase    := true
     actBar     := bar_index
     actCrossed := false
     actWeak    := false
-    actBox  := na
-    if cupOk
-        actType  := "Cup with Handle"
-        actPivot := cupPivot
-        actInval := cupLow + 0.5 * (cupL - cupLow)        // handle falling into the lower half kills the cup
-        x0 = bar_index - cupLOff
-        x1 = bar_index - cupLowOff
-        x2 = bar_index - rOff
-        line.new(x0, cupL, x1, cupLow, color = color.new(color.orange, 30), width = 2)
-        line.new(x1, cupLow, x2, R, color = color.new(color.orange, 30), width = 2)
-        line.new(x2, R, bar_index, R, color = color.new(color.orange, 30), width = 1, style = line.style_dotted)
-        label.new(x2, R, "C&H " + str.tostring(cupPivot, format.mintick), style = label.style_label_down, color = color.orange, textcolor = color.white, size = size.small)
-    else if dbOk
-        actType  := "Double Bottom"
-        actPivot := dbPivot
-        actInval := math.min(dbS1, dbS2)
-        c = color.new(color.purple, 20)
-        line.new(dbH0Bar, dbH0, dbS1Bar, dbS1, color = c, width = 2)
-        line.new(dbS1Bar, dbS1, dbMBar, dbM, color = c, width = 2)
-        line.new(dbMBar, dbM, dbS2Bar, dbS2, color = c, width = 2)
-        line.new(dbS2Bar, dbS2, bar_index, close, color = c, width = 2)
-        label.new(dbMBar, dbM, "DB " + str.tostring(dbPivot, format.mintick), style = label.style_label_down, color = color.purple, textcolor = color.white, size = size.small)
+    actBox     := na
+    actType    := cC == 1 ? "Cup with Handle" : cC == 2 ? "Double Bottom" : cC == 3 ? "Cup w/o Handle" : "Flat Base"
+    actTag     := (cD ? " DEEP" : "") + (isWk ? " (W)" : " (D)")
+    actPivot   := cP
+    actInval   := cI
+    txt = (cC == 1 ? "C&H " : cC == 2 ? "DB " : cC == 3 ? "Cup " : "Flat ") + str.tostring(cP, format.mintick) + actTag
+    col = cC == 2 ? color.purple : cC == 4 ? color.blue : cD ? color.maroon : color.orange
+    lc  = color.new(col, 30)
+    if cC == 1
+        line.new(cTA, cPA, cTB, cPB, xloc.bar_time, color = lc, width = 2)
+        line.new(cTB, cPB, cTC, cPC, xloc.bar_time, color = lc, width = 2)
+        line.new(cTC, cPC, time, cPC, xloc.bar_time, color = lc, width = 1, style = line.style_dotted)
+        label.new(cTC, cPC, txt, xloc.bar_time, style = label.style_label_down, color = col, textcolor = color.white, size = size.small)
+    else if cC == 2
+        line.new(cTA, cPA, cTB, cPB, xloc.bar_time, color = lc, width = 2)
+        line.new(cTB, cPB, cTC, cPC, xloc.bar_time, color = lc, width = 2)
+        line.new(cTC, cPC, cTD, cPD, xloc.bar_time, color = lc, width = 2)
+        line.new(cTD, cPD, time, close, xloc.bar_time, color = lc, width = 2)
+        label.new(cTC, cPC, txt, xloc.bar_time, style = label.style_label_down, color = col, textcolor = color.white, size = size.small)
+    else if cC == 3
+        line.new(cTA, cPA, cTB, cPB, xloc.bar_time, color = lc, width = 2)
+        line.new(cTB, cPB, time, close, xloc.bar_time, color = lc, width = 2)
+        line.new(cTA, cPA, time, cPA, xloc.bar_time, color = lc, width = 1, style = line.style_dotted)
+        label.new(cTA, cPA, txt, xloc.bar_time, style = label.style_label_down, color = col, textcolor = color.white, size = size.small)
     else
-        actType  := "Flat Base"
-        actPivot := flatPivot
-        actInval := flatHH * (1 - flatMaxDepth / 100)    // fails only if the base gets deeper than allowed
-        actBox   := box.new(bar_index - flatLen + 1, flatHH, bar_index, flatLL, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90))
-        label.new(bar_index - flatHOff, flatHH, "Flat " + str.tostring(flatPivot, format.mintick), style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
+        actBox := box.new(cTA, cPA, time, cPB, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90), xloc = xloc.bar_time)
+        label.new(cTC, cPC, txt, xloc.bar_time, style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
 
 if actType != "" and not na(actBox)
-    box.set_right(actBox, bar_index)                     // flat-base box grows while the base is active
+    box.set_right(actBox, time)                          // flat-base box grows while the base is active
 
 baseOk    = actType != ""
 pivot     = baseOk ? actPivot : na
@@ -354,7 +427,7 @@ plotshape(newBase, "Base detected", shape.diamond, location.abovebar, color.oran
 plotshape(attempt, "Intraday attempt above pivot", shape.xcross, location.abovebar, color.new(color.orange, 20), size = size.tiny)
 plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, display = display.none)
 if volBreak
-    label.new(bar_index, low, "▲ BUY\n" + str.tostring(evtPivot, format.mintick), yloc = yloc.belowbar, style = label.style_label_up, color = color.green, textcolor = color.white, size = size.normal, tooltip = "Volume-confirmed breakout: closed above pivot " + str.tostring(evtPivot, format.mintick) + " on " + str.tostring(volume / avgVol[1], "#.#") + "x avg volume, inside the buy zone")
+    label.new(bar_index, low, "▲ BUY\n" + str.tostring(evtPivot, format.mintick), yloc = yloc.belowbar, style = label.style_label_up, color = color.green, textcolor = color.white, size = size.normal, tooltip = "Volume-confirmed breakout from " + evtType + ": closed above pivot " + str.tostring(evtPivot, format.mintick) + " on " + str.tostring(volume / avgVol[1], "#.#") + "x avg volume, inside the buy zone")
 plotshape(weakBreak, "Breakout on light volume / extended", shape.labelup, location.belowbar, color.gray, text = "BO?", textcolor = color.white, size = size.small)
 plotshape(extended, "Extended past buy zone", shape.labelup, location.belowbar, color.new(color.gray, 30), text = "EXT", textcolor = color.white, size = size.small)
 plotshape(failed, "Base failed", shape.xcross, location.belowbar, color.red, size = size.tiny)
@@ -363,7 +436,7 @@ var table tb = table.new(position.top_right, 2, 5, border_width = 1)
 if barstate.islast
     fg = chart.fg_color
     table.cell(tb, 0, 0, "Base", text_color = fg)
-    table.cell(tb, 1, 0, not timeframe.isdaily ? "Use DAILY chart" : baseOk ? actType : "None", text_color = fg)
+    table.cell(tb, 1, 0, not timeframe.isdaily ? "Use DAILY chart" : baseOk ? actType + actTag : "None", text_color = fg)
     table.cell(tb, 0, 1, "Pivot", text_color = fg)
     table.cell(tb, 1, 1, baseOk ? str.tostring(actPivot, format.mintick) : "—", text_color = fg)
     table.cell(tb, 0, 2, "vs pivot", text_color = fg)
@@ -376,9 +449,9 @@ if barstate.islast
 // ── Alerts ────────────────────────────────────────────────────────────────
 // Option A: create ONE alert with condition "Any alert() function call" to get all events
 if newBase
-    alert(syminfo.ticker + ": " + actType + " detected. Pivot " + str.tostring(actPivot, format.mintick) + ", close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + ": " + actType + actTag + " detected. Pivot " + str.tostring(actPivot, format.mintick) + ", close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
 if nearEvent
-    alert(syminfo.ticker + ": within " + str.tostring(nearPct) + "% of " + actType + " pivot " + str.tostring(actPivot, format.mintick), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + ": within " + str.tostring(nearPct) + "% of " + actType + actTag + " pivot " + str.tostring(actPivot, format.mintick), alert.freq_once_per_bar_close)
 if crossPx
     alert(syminfo.ticker + ": crossing " + evtType + " pivot " + str.tostring(evtPivot, format.mintick) + " intraday — check volume", alert.freq_once_per_bar)
 if volBreak

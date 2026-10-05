@@ -57,6 +57,10 @@ watchlist:
 
 # Base-detection rules — mirror the TradingView "CANSLIM" indicator inputs (tradingview/canslim_bases.pine)
 bases:
+  timeframe: Weekly       # Weekly = find bases on weekly bars, time breakouts on daily (O'Neil); Daily = all daily
+  useNoHandle: true       # cup without handle (pivot = left-side high + $0.10)
+  allowDeep: true         # accept cups / double bottoms up to deepMax, labelled DEEP
+  deepMax: 50
   cupMinLen: 35
   cupMaxLen: 325
   cupMinDepth: 12
