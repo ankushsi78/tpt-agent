@@ -1,5 +1,6 @@
 //@version=6
 // CAN SLIM Base & Pivot Alerts — v2
+// v2.4: green "BUY <pivot>" label on volume-confirmed breakouts; buy zone (pivot → +5%) shaded.
 // v2.3: a cup's interior can't trade above its rims (rejects "cups" that contain a higher peak)
 // v2.2: intraday pivot-cross alert and "BO?" fire once per base; "EXT" marks a base left behind
 //       by a close beyond the buy zone without volume confirmation.
@@ -345,12 +346,15 @@ nearNow   = baseOk and close >= actPivot * (1 - nearPct / 100) and close <= actP
 nearEvent = nearNow and not nearNow[1] and not newBase
 
 // ── Visuals ───────────────────────────────────────────────────────────────
-plot(pivot, "Pivot", color.orange, 2, plot.style_linebr)
-plot(baseOk ? actPivot * (1 + buyZonePct / 100) : na, "Buy zone top", color.new(color.green, 40), 1, plot.style_linebr)
+pPivot = plot(pivot, "Pivot", color.orange, 2, plot.style_linebr)
+pZone  = plot(baseOk ? actPivot * (1 + buyZonePct / 100) : na, "Buy zone top", color.new(color.green, 40), 1, plot.style_linebr)
+fill(pPivot, pZone, color.new(color.green, 85), "Buy zone")
 plot(evtPivot, "Last pivot", display = display.none)
 plotshape(newBase, "Base detected", shape.diamond, location.abovebar, color.orange, size = size.tiny)
 plotshape(attempt, "Intraday attempt above pivot", shape.xcross, location.abovebar, color.new(color.orange, 20), size = size.tiny)
-plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, text = "BO", textcolor = color.white, size = size.small)
+plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, display = display.none)
+if volBreak
+    label.new(bar_index, low, "▲ BUY\n" + str.tostring(evtPivot, format.mintick), yloc = yloc.belowbar, style = label.style_label_up, color = color.green, textcolor = color.white, size = size.normal, tooltip = "Volume-confirmed breakout: closed above pivot " + str.tostring(evtPivot, format.mintick) + " on " + str.tostring(volume / avgVol[1], "#.#") + "x avg volume, inside the buy zone")
 plotshape(weakBreak, "Breakout on light volume / extended", shape.labelup, location.belowbar, color.gray, text = "BO?", textcolor = color.white, size = size.small)
 plotshape(extended, "Extended past buy zone", shape.labelup, location.belowbar, color.new(color.gray, 30), text = "EXT", textcolor = color.white, size = size.small)
 plotshape(failed, "Base failed", shape.xcross, location.belowbar, color.red, size = size.tiny)
