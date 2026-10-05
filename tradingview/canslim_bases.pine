@@ -1,5 +1,6 @@
 //@version=6
 // CAN SLIM Base & Pivot Alerts — v2
+// v2.3: a cup's interior can't trade above its rims (rejects "cups" that contain a higher peak)
 // v2.2: intraday pivot-cross alert and "BO?" fire once per base; "EXT" marks a base left behind
 //       by a close beyond the buy zone without volume confirmation.
 // Detects O'Neil-style Cup-with-Handle, Double Bottom and Flat Base patterns on DAILY charts,
@@ -104,10 +105,12 @@ if useCup and bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff 
     lowest   = R
     lowOff   = rOff
     lOff     = -1
+    innerHi  = 0.0                                       // highest high inside the cup (between the rims)
     for i = rOff + 1 to rOff + cupMaxLen
         if (R - lowest) / R * 100 >= cupMinDepth and high[i] >= lipLevel
             lOff := i
             break
+        innerHi := math.max(innerHi, high[i])
         if low[i] < lowest
             lowest := low[i]
             lowOff := i
@@ -124,7 +127,7 @@ if useCup and bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff 
                     lOff := j
         cupLen  = lOff - rOff
         depth   = (L - lowest) / L * 100
-        rightOk = R >= L * (1 - lipTol / 100) and R <= L * (1 + lipTol / 100)
+        rightOk = R >= L * (1 - lipTol / 100) and R <= L * (1 + lipTol / 100) and innerHi <= math.max(L, R)
         upperOk = not hUpperHalf or hLow >= lowest + 0.5 * (L - lowest)
         volOk   = not hVolDry or hAvgVol < avgVol
         pLow    = priorLowBefore(lOff)
