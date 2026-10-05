@@ -441,6 +441,7 @@ def main():
     stamp = dt.date.today().isoformat()
     for title, t in tabs.items():
         t.to_csv(os.path.join(out_dir, f"canslim_{title.lower().replace(' ', '_')}_{stamp}.csv"), index=False)
+    df[["ticker", "rs", "group_rank", "checks_passed"]].to_csv(os.path.join(out_dir, "canslim_ranks_latest.csv"), index=False)
     log(f"CSVs written to {out_dir}")
 
     for t in [s.strip().upper() for s in args.tickers.split(",") if s.strip()]:

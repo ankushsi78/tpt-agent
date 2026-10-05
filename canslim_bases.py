@@ -238,6 +238,11 @@ def status_row(tkr, df, p):
                 note = f"Not in a recognized base (last signal {age}d ago)"
         row.update({"Status": status, "Base": "", "Pivot (Buy Point)": "", "Buy Zone Top": "", "% vs Pivot": "",
                     "Days in Base": "", "Attempts Above Pivot": "", "Note": note})
+        if status in ("Breakout — in buy zone", "Extended after BUY", "Extended"):
+            piv = last_sig[3]                                    # the base the stock just left
+            row.update({"Base": last_sig[2], "Pivot (Buy Point)": round(piv, 2),
+                        "Buy Zone Top": round(piv * (1 + p["buyZonePct"] / 100), 2),
+                        "% vs Pivot": round((close / piv - 1) * 100, 1)})
     if last_sig:
         row.update({"Last Signal": f"{last_sig[1]} ({last_sig[2]} {last_sig[3]:.2f})",
                     "Last Signal Date": last_sig[0].strftime("%Y-%m-%d")})
@@ -354,7 +359,8 @@ def main():
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()] or \
         (read_watchlist(sh, cfg) if sh else cfg["watchlist"]["tickers"])
     log(f"{len(tickers)} tickers")
-    df = build_status(tickers, cfg)
+    ranks = os.path.join(HERE, cfg["output"]["csv_dir"], "canslim_ranks_latest.csv")   # from the last screener run
+    df = build_status(tickers, cfg, extra=pd.read_csv(ranks) if os.path.exists(ranks) else None)
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_colwidth", 60):
         print(df.drop(columns=["Note"]).to_string(index=False))
     if sh:
