@@ -389,9 +389,8 @@ def write_status(sh, df, note):
     ws.update(values, "A1", value_input_option="USER_ENTERED")
     ws.format("A2:2", {"textFormat": {"bold": True}})
     ws.freeze(rows=2, cols=1)
-    status_col = list(df.columns).index("Status")
-    col_letter = chr(ord("A") + status_col)
-    fmts = [{"range": f"{col_letter}3:{col_letter}{len(values)}", "format": {"backgroundColor": {"red": 1, "green": 1, "blue": 1}}}]
+    # reset the Ticker/Status colors first — rows move between runs, so old colors would stick to the wrong ticker
+    fmts = [{"range": f"A3:B{len(values) + 50}", "format": {"backgroundColor": {"red": 1, "green": 1, "blue": 1}}}]
     for i, s in enumerate(df["Status"], start=3):
         if s in STATUS_COLORS:
             r, g, b = STATUS_COLORS[s]
