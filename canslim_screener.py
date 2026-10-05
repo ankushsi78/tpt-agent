@@ -452,6 +452,11 @@ def main():
             log("output.sheet_id not set — skipping Google Sheet (CSVs only)")
         else:
             log(f"Google Sheet updated: {write_sheet(cfg, tabs, note)}")
+            import canslim_bases
+            sh = canslim_bases.open_sheet(cfg)
+            status = canslim_bases.build_status(canslim_bases.read_watchlist(sh, cfg), cfg, extra=df)
+            canslim_bases.write_status(sh, status, canslim_bases.status_note(status))
+            status.to_csv(os.path.join(out_dir, f"canslim_watchlist_status_{stamp}.csv"), index=False)
     print("\n" + mkt.to_string(index=False))
     print("\n" + tabs["CANSLIM Watchlist"].head(25)[["Ticker", "Industry", "Checks (of 7)", "RS", "Group Rank",
                                                       "EPS Q Gr %", "Sales Q Gr %", "% Off 52w High"]].to_string(index=False))

@@ -48,3 +48,45 @@ output:
   sec_user_agent: "BayFin Research contactankush@gmail.com"   # SEC requires a contact email
   cache_dir: .cache/canslim        # SEC + Nasdaq downloads cached for cache_hours
   cache_hours: 20
+
+# ── Watchlist Status tab (canslim_bases.py) ─────────────────────────────────
+# Seed list for the sheet's "My Watchlist" tab (used only when that tab doesn't exist yet;
+# after that, edit tickers directly in the sheet).
+watchlist:
+  tickers: [NVDA, SPCX, TSM, FTNT, GCT, MU, AMD, DELL, HPE, FORM, INSW, TWLO, DINO, LPG, MPC, P, TER, VLO, NTAP, PARR, ARW]
+
+# Base-detection rules — mirror the TradingView "CANSLIM" indicator inputs (tradingview/canslim_bases.pine)
+bases:
+  cupMinLen: 35
+  cupMaxLen: 325
+  cupMinDepth: 12
+  cupMaxDepth: 35
+  lipTol: 5
+  hMinLen: 5
+  hMaxLen: 25
+  hMaxDepth: 12
+  hUpperHalf: true
+  hVolDry: true
+  dbK: 5
+  dbMinGap: 10
+  dbMaxSpan: 250
+  dbUnder: 5
+  dbOver: 3
+  dbMinMid: 8
+  dbMinDepth: 12
+  dbMaxDepth: 40
+  dbMinLen: 35
+  dbLeftLook: 150
+  flatMinLen: 25
+  flatMaxLen: 100
+  flatMaxDepth: 15
+  flatHighAge: 10
+  flatSlopeMax: 4
+  flatNearTop: 5
+  priorAdv: 20
+  trendFilter: true
+  nearPct: 3
+  volMult: 1.4
+  buyZonePct: 5
+  pivotAdd: 0.10
+  actMaxBars: 65
