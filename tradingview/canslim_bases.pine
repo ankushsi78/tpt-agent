@@ -1,5 +1,7 @@
 //@version=6
 // CAN SLIM Base & Pivot Alerts — v2
+// v2.2: intraday pivot-cross alert and "BO?" fire once per base; "EXT" marks a base left behind
+//       by a close beyond the buy zone without volume confirmation.
 // Detects O'Neil-style Cup-with-Handle, Double Bottom and Flat Base patterns on DAILY charts,
 // freezes the pivot (buy point) once a base is found, and fires alerts for:
 //   1. New base detected      2. Price within X% of pivot
@@ -71,6 +73,8 @@ var string actType    = ""
 var float  actPivot   = na
 var float  actInval   = na
 var int    actBar     = na
+var bool   actCrossed = false     // pivot already crossed (intraday or close) during this base
+var bool   actWeak    = false     // "BO?" already shown for this base
 var box    actBox     = na
 var int    lastEndBar = 0
 var float  lastEndPiv = na
@@ -258,6 +262,7 @@ newBase   = false
 crossPx   = false
 volBreak  = false
 weakBreak = false
+extended  = false
 attempt   = false
 failed    = false
 evtPivot  = float(na)
@@ -265,24 +270,27 @@ evtType   = ""
 
 if actType != ""
     if close > actPivot
-        firstCross = close[1] <= actPivot
         inZone     = close <= actPivot * (1 + buyZonePct / 100)
-        crossPx  := firstCross
-        evtPivot := actPivot
-        evtType  := actType
+        crossPx    := not actCrossed                     // intraday heads-up fires once per base
+        actCrossed := true
+        evtPivot   := actPivot
+        evtType    := actType
         if inZone and volume >= volMult * avgVol[1]
             volBreak := true                             // confirmed: base is done
             actType  := ""
         else if not inZone
-            weakBreak := firstCross                      // gapped past the buy zone: too extended
-            actType   := ""
+            extended := true                             // past the buy zone without confirmation: base is done
+            actType  := ""
         else
-            weakBreak := firstCross                      // above pivot on light volume: keep watching for volume
+            weakBreak := not actWeak                     // above pivot on light volume: keep watching for volume
+            actWeak   := true
     else if close < actInval or bar_index - actBar > actMaxBars
         failed  := close < actInval
         actType := ""
     else
         attempt := high > actPivot
+        if attempt
+            actCrossed := true
     if actType == ""
         lastEndPiv := nz(evtPivot, actPivot)
         actPivot   := na
@@ -292,8 +300,10 @@ if actType != ""
 candPivot = cupOk ? cupPivot : dbOk ? dbPivot : flatPivot
 sameAsLast = not na(lastEndPiv) and math.abs(candPivot / lastEndPiv - 1) < 0.01 and bar_index - lastEndBar < 15
 if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or flatOk) and not sameAsLast
-    newBase := true
-    actBar  := bar_index
+    newBase    := true
+    actBar     := bar_index
+    actCrossed := false
+    actWeak    := false
     actBox  := na
     if cupOk
         actType  := "Cup with Handle"
@@ -339,6 +349,7 @@ plotshape(newBase, "Base detected", shape.diamond, location.abovebar, color.oran
 plotshape(attempt, "Intraday attempt above pivot", shape.xcross, location.abovebar, color.new(color.orange, 20), size = size.tiny)
 plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, text = "BO", textcolor = color.white, size = size.small)
 plotshape(weakBreak, "Breakout on light volume / extended", shape.labelup, location.belowbar, color.gray, text = "BO?", textcolor = color.white, size = size.small)
+plotshape(extended, "Extended past buy zone", shape.labelup, location.belowbar, color.new(color.gray, 30), text = "EXT", textcolor = color.white, size = size.small)
 plotshape(failed, "Base failed", shape.xcross, location.belowbar, color.red, size = size.tiny)
 
 var table tb = table.new(position.top_right, 2, 5, border_width = 1)
