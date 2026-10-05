@@ -1,14 +1,18 @@
 //@version=6
-// CAN SLIM Base & Pivot Alerts
-// Detects O'Neil-style Cup-with-Handle and Flat Base patterns on DAILY charts,
-// plots the pivot (buy point) and fires alerts for:
+// CAN SLIM Base & Pivot Alerts — v2
+// Detects O'Neil-style Cup-with-Handle, Double Bottom and Flat Base patterns on DAILY charts,
+// freezes the pivot (buy point) once a base is found, and fires alerts for:
 //   1. New base detected      2. Price within X% of pivot
 //   3. Price crossing pivot (intraday)   4. Volume-confirmed breakout (at close)
+// v2: flat bases must be sideways (high >= N bars old, flat first/second half), pivot is frozen
+//     while a base is active (intraday pokes above it are "attempts"), one label per base,
+//     and double-bottom detection.
 // Pattern detection is heuristic -- always confirm the chart by eye.
-indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM", overlay = true, max_bars_back = 600, max_lines_count = 300, max_boxes_count = 100, max_labels_count = 100)
+indicator("CAN SLIM Base & Pivot Alerts", shorttitle = "CANSLIM", overlay = true, max_bars_back = 600, max_lines_count = 400, max_boxes_count = 100, max_labels_count = 200)
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 grpCup      = "Cup with Handle"
+useCup      = input.bool(true, "Detect cups with handle", group = grpCup)
 cupMinLen   = input.int(35, "Cup min length (bars)", minval = 10, maxval = 450, group = grpCup, tooltip = "35 daily bars ≈ 7 weeks")
 cupMaxLen   = input.int(325, "Cup max length (bars)", minval = 20, maxval = 450, group = grpCup, tooltip = "325 daily bars ≈ 65 weeks")
 cupMinDepth = input.float(12.0, "Cup min depth %", group = grpCup)
@@ -20,11 +24,27 @@ hMaxDepth   = input.float(12.0, "Handle max depth %", group = grpCup)
 hUpperHalf  = input.bool(true, "Handle must be in upper half of cup", group = grpCup)
 hVolDry     = input.bool(true, "Handle avg volume below 50-day avg", group = grpCup)
 
+grpDb       = "Double Bottom"
+useDb       = input.bool(true, "Detect double bottoms", group = grpDb)
+dbK         = input.int(5, "Swing-low strength (bars each side)", minval = 2, maxval = 10, group = grpDb)
+dbMinGap    = input.int(10, "Min bars between the two lows", minval = 5, group = grpDb)
+dbMaxSpan   = input.int(250, "Max bars back to the first low", minval = 30, maxval = 300, group = grpDb)
+dbUnder     = input.float(5.0, "2nd low may undercut 1st by up to %", group = grpDb)
+dbOver      = input.float(3.0, "2nd low may sit above 1st by up to %", group = grpDb)
+dbMinMid    = input.float(8.0, "Middle peak at least % above the lows", group = grpDb)
+dbMinDepth  = input.float(12.0, "Base min depth %", group = grpDb)
+dbMaxDepth  = input.float(40.0, "Base max depth %", group = grpDb)
+dbMinLen    = input.int(35, "Base min length (bars from left high)", group = grpDb)
+dbLeftLook  = input.int(150, "Bars before 1st low to find the left high", minval = 20, maxval = 150, group = grpDb)
+
 grpFlat      = "Flat Base"
 useFlat      = input.bool(true, "Detect flat bases", group = grpFlat)
 flatMinLen   = input.int(25, "Flat base min length (bars)", minval = 10, group = grpFlat, tooltip = "25 daily bars ≈ 5 weeks")
 flatMaxLen   = input.int(100, "Flat base max length (bars)", minval = 15, maxval = 400, group = grpFlat)
 flatMaxDepth = input.float(15.0, "Flat base max depth %", group = grpFlat)
+flatHighAge  = input.int(10, "Base high must be at least N bars old", minval = 0, group = grpFlat, tooltip = "Stops flagging a 'base' while the stock is still making new highs")
+flatSlopeMax = input.float(4.0, "Max drift: 2nd-half vs 1st-half avg close %", group = grpFlat, tooltip = "Rejects windows that are trending up or down rather than moving sideways")
+flatNearTop  = input.float(5.0, "Base starts at first bar within % of base high", group = grpFlat)
 
 grpGen      = "Filters & Breakout"
 priorAdv    = input.float(20.0, "Min prior uptrend into base %", group = grpGen, tooltip = "Rise from the 3-month low before the base to the base high. O'Neil prefers 30%+ for cups.")
@@ -33,6 +53,7 @@ nearPct     = input.float(3.0, "'Near pivot' zone: % below pivot", group = grpGe
 volMult     = input.float(1.4, "Breakout volume ≥ x × 50-day avg", group = grpGen)
 buyZonePct  = input.float(5.0, "Buy zone: % above pivot", group = grpGen)
 pivotAdd    = input.float(0.10, "Pivot = base high + $", group = grpGen)
+actMaxBars  = input.int(65, "Retire a base after N bars without breakout", minval = 10, group = grpGen)
 
 // ── Common series ─────────────────────────────────────────────────────────
 avgVol  = ta.sma(volume, 50)
@@ -45,7 +66,15 @@ priorLowBefore(int off) =>
         m := math.min(m, low[i])
     m
 
-// ── Cup with Handle ───────────────────────────────────────────────────────
+// Active-base state (the pivot is frozen while a base is active)
+var string actType    = ""
+var float  actPivot   = na
+var float  actInval   = na
+var int    actBar     = na
+var box    actBox     = na
+var int    lastEndBar = 0
+
+// ── Candidate: Cup with Handle ────────────────────────────────────────────
 rOff = -ta.highestbars(high, hMaxLen + 1)   // bars since right-side high (handle start)
 R    = high[rOff]
 
@@ -56,8 +85,7 @@ cupLow    = float(na)
 cupLOff   = int(na)
 cupLowOff = int(na)
 
-if bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
-    // Handle stats (bars after the right-side high)
+if useCup and bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
     hLow    = low
     hVolSum = 0.0
     for k = 0 to rOff - 1
@@ -82,7 +110,6 @@ if bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
             break
 
     if lOff > 0
-        // Slide to the local peak of the left lip
         L      = high[lOff]
         maxOff = math.min(lOff + 10, rOff + cupMaxLen)
         if maxOff > lOff
@@ -105,96 +132,225 @@ if bar_index > cupMaxLen + hMaxLen + 80 and rOff >= hMinLen and rOff <= hMaxLen
             cupLOff   := lOff
             cupLowOff := lowOff
 
-// ── Flat Base ─────────────────────────────────────────────────────────────
+// ── Candidate: Double Bottom ──────────────────────────────────────────────
+var array<float> slVal = array.new<float>()
+var array<int>   slBar = array.new<int>()
+pl = ta.pivotlow(low, dbK, dbK)
+if not na(pl)
+    array.push(slVal, pl)
+    array.push(slBar, bar_index - dbK)
+    if array.size(slVal) > 12
+        array.shift(slVal)
+        array.shift(slBar)
+
+dbOk    = false
+dbPivot = float(na)
+dbH0    = float(na)
+dbM     = float(na)
+dbS1    = float(na)
+dbS2    = float(na)
+dbH0Bar = int(na)
+dbMBar  = int(na)
+dbS1Bar = int(na)
+dbS2Bar = int(na)
+
+n = array.size(slVal)
+if useDb and n >= 2 and bar_index > dbMaxSpan + dbLeftLook + 70
+    s2v = array.get(slVal, n - 1)
+    s2b = array.get(slBar, n - 1)
+    o2  = bar_index - s2b
+    if o2 <= 30 and close > s2v
+        for j = n - 2 to math.max(0, n - 8)
+            s1v = array.get(slVal, j)
+            s1b = array.get(slBar, j)
+            o1  = bar_index - s1b
+            if s2b - s1b >= dbMinGap and o1 <= dbMaxSpan
+                tolOk = s2v >= s1v * (1 - dbUnder / 100) and s2v <= s1v * (1 + dbOver / 100)
+                M     = high[o2 + 1]
+                mOff  = o2 + 1
+                lowBetween = low[o2 + 1]
+                for k = o2 + 1 to o1 - 1
+                    if high[k] > M
+                        M    := high[k]
+                        mOff := k
+                    lowBetween := math.min(lowBetween, low[k])
+                H0    = high[o1 + 1]
+                h0Off = o1 + 1
+                for k = o1 + 1 to o1 + dbLeftLook
+                    if high[k] > H0
+                        H0    := high[k]
+                        h0Off := k
+                lows  = math.min(s1v, s2v)
+                depth = (H0 - lows) / H0 * 100
+                pLow  = priorLowBefore(h0Off)
+                advOk = (H0 - pLow) / pLow * 100 >= priorAdv
+                if tolOk and lowBetween >= lows and M >= math.max(s1v, s2v) * (1 + dbMinMid / 100) and M < H0 and depth >= dbMinDepth and depth <= dbMaxDepth and h0Off >= dbMinLen and advOk and close < M + pivotAdd
+                    dbOk    := true
+                    dbPivot := M + pivotAdd
+                    dbH0    := H0
+                    dbM     := M
+                    dbS1    := s1v
+                    dbS2    := s2v
+                    dbH0Bar := bar_index - h0Off
+                    dbMBar  := bar_index - mOff
+                    dbS1Bar := s1b
+                    dbS2Bar := s2b
+                    break
+
+// ── Candidate: Flat Base ──────────────────────────────────────────────────
 flatOk    = false
 flatPivot = float(na)
 flatLen   = 0
 flatHH    = float(na)
 flatLL    = float(na)
+flatHOff  = 0
 
-if useFlat and not cupOk and bar_index > flatMaxLen + 70
-    hh = high
-    ll = low
-    for i = 1 to flatMaxLen - 1
+maxBack = math.min(flatMaxLen - 1, bar_index - lastEndBar - 1)   // never reuse bars of a base that already ended
+if useFlat and bar_index > flatMaxLen + 70 and maxBack >= flatMinLen - 1
+    hh     = high
+    hhOff  = 0
+    ll     = low
+    winEnd = 0
+    for i = 1 to maxBack
         nh = math.max(hh, high[i])
         nl = math.min(ll, low[i])
         if (nh - nl) / nh * 100 > flatMaxDepth
             break
-        hh := nh
-        ll := nl
-        if i + 1 >= flatMinLen
-            flatLen := i + 1
-    if flatLen >= flatMinLen
-        pLow = priorLowBefore(flatLen)
-        if (hh - pLow) / pLow * 100 >= priorAdv and close < hh + pivotAdd
+        if high[i] > hh
+            hhOff := i
+        hh     := nh
+        ll     := nl
+        winEnd := i
+    // The base starts at the oldest bar in the window that traded near the base high
+    startOff = hhOff
+    for i = winEnd to hhOff
+        if high[i] >= hh * (1 - flatNearTop / 100)
+            startOff := i
+            break
+    fLen = startOff + 1
+    if fLen >= flatMinLen and hhOff >= flatHighAge
+        half   = math.floor(fLen / 2)
+        bl     = low
+        sumNew = 0.0
+        sumOld = 0.0
+        for i = 0 to startOff
+            bl := math.min(bl, low[i])
+            if i < half
+                sumNew += close[i]
+            else
+                sumOld += close[i]
+        drift = math.abs((sumNew / half) / (sumOld / (fLen - half)) - 1) * 100
+        pLow  = priorLowBefore(startOff)
+        if drift <= flatSlopeMax and (hh - pLow) / pLow * 100 >= priorAdv and close < hh + pivotAdd
             flatOk    := true
             flatPivot := hh + pivotAdd
             flatHH    := hh
-            flatLL    := ll
+            flatLL    := bl
+            flatLen   := fLen
+            flatHOff  := hhOff
 
-// ── Combine ───────────────────────────────────────────────────────────────
-baseOk   = trendOk and (cupOk or flatOk)
-pivot    = baseOk ? (cupOk ? cupPivot : flatPivot) : na
-baseType = cupOk ? "Cup with Handle" : "Flat Base"
+// ── State machine ─────────────────────────────────────────────────────────
+newBase   = false
+crossPx   = false
+volBreak  = false
+weakBreak = false
+attempt   = false
+failed    = false
+evtPivot  = float(na)
+evtType   = ""
 
-bs        = ta.barssince(baseOk)
-newBase   = baseOk and (na(bs[1]) or bs[1] > 5)            // ignore flicker within 5 bars
-nearNow   = baseOk and close >= pivot * (1 - nearPct / 100)
-nearEvent = nearNow and not nearNow[1]
+if actType != ""
+    if close > actPivot
+        crossPx   := true
+        evtPivot  := actPivot
+        evtType   := actType
+        volBreak  := volume >= volMult * avgVol[1] and close <= actPivot * (1 + buyZonePct / 100)
+        weakBreak := not volBreak
+        actType   := ""
+    else if close < actInval or bar_index - actBar > actMaxBars
+        failed  := close < actInval
+        actType := ""
+    else
+        attempt := high > actPivot
+    if actType == ""
+        actPivot   := na
+        actBox     := na
+        lastEndBar := bar_index
 
-// Remember the last valid pivot so a breakout bar (where the base is no longer "forming") can use it
-var float  lastPivot   = na
-var int    lastBaseBar = na
-var string lastType    = ""
-recentBase = not na(lastBaseBar) and bar_index - lastBaseBar <= 3
-crossPx    = recentBase and close > lastPivot and close[1] <= lastPivot
-volBreak   = crossPx and volume >= volMult * avgVol[1] and close <= lastPivot * (1 + buyZonePct / 100)
-if baseOk
-    lastPivot   := pivot
-    lastBaseBar := bar_index
-    lastType    := baseType
+if actType == "" and lastEndBar != bar_index and trendOk and (cupOk or dbOk or flatOk)
+    newBase := true
+    actBar  := bar_index
+    actBox  := na
+    if cupOk
+        actType  := "Cup with Handle"
+        actPivot := cupPivot
+        actInval := cupLow + 0.5 * (cupL - cupLow)        // handle falling into the lower half kills the cup
+        x0 = bar_index - cupLOff
+        x1 = bar_index - cupLowOff
+        x2 = bar_index - rOff
+        line.new(x0, cupL, x1, cupLow, color = color.new(color.orange, 30), width = 2)
+        line.new(x1, cupLow, x2, R, color = color.new(color.orange, 30), width = 2)
+        line.new(x2, R, bar_index, R, color = color.new(color.orange, 30), width = 1, style = line.style_dotted)
+        label.new(x2, R, "C&H " + str.tostring(cupPivot, format.mintick), style = label.style_label_down, color = color.orange, textcolor = color.white, size = size.small)
+    else if dbOk
+        actType  := "Double Bottom"
+        actPivot := dbPivot
+        actInval := math.min(dbS1, dbS2)
+        c = color.new(color.purple, 20)
+        line.new(dbH0Bar, dbH0, dbS1Bar, dbS1, color = c, width = 2)
+        line.new(dbS1Bar, dbS1, dbMBar, dbM, color = c, width = 2)
+        line.new(dbMBar, dbM, dbS2Bar, dbS2, color = c, width = 2)
+        line.new(dbS2Bar, dbS2, bar_index, close, color = c, width = 2)
+        label.new(dbMBar, dbM, "DB " + str.tostring(dbPivot, format.mintick), style = label.style_label_down, color = color.purple, textcolor = color.white, size = size.small)
+    else
+        actType  := "Flat Base"
+        actPivot := flatPivot
+        actInval := flatLL
+        actBox   := box.new(bar_index - flatLen + 1, flatHH, bar_index, flatLL, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90))
+        label.new(bar_index - flatHOff, flatHH, "Flat " + str.tostring(flatPivot, format.mintick), style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
+
+if actType != "" and not na(actBox)
+    box.set_right(actBox, bar_index)                     // flat-base box grows while the base is active
+
+baseOk    = actType != ""
+pivot     = baseOk ? actPivot : na
+nearNow   = baseOk and close >= actPivot * (1 - nearPct / 100) and close <= actPivot
+nearEvent = nearNow and not nearNow[1] and not newBase
 
 // ── Visuals ───────────────────────────────────────────────────────────────
 plot(pivot, "Pivot", color.orange, 2, plot.style_linebr)
-plot(baseOk ? pivot * (1 + buyZonePct / 100) : na, "Buy zone top", color.new(color.green, 40), 1, plot.style_linebr)
-plot(lastPivot, "Last pivot", display = display.none)
+plot(baseOk ? actPivot * (1 + buyZonePct / 100) : na, "Buy zone top", color.new(color.green, 40), 1, plot.style_linebr)
+plot(evtPivot, "Last pivot", display = display.none)
 plotshape(newBase, "Base detected", shape.diamond, location.abovebar, color.orange, size = size.tiny)
+plotshape(attempt, "Intraday attempt above pivot", shape.xcross, location.abovebar, color.new(color.orange, 20), size = size.tiny)
 plotshape(volBreak, "Volume breakout", shape.labelup, location.belowbar, color.green, text = "BO", textcolor = color.white, size = size.small)
+plotshape(weakBreak, "Breakout on light volume / extended", shape.labelup, location.belowbar, color.gray, text = "BO?", textcolor = color.white, size = size.small)
+plotshape(failed, "Base failed", shape.xcross, location.belowbar, color.red, size = size.tiny)
 
-if newBase and cupOk
-    x0 = bar_index - cupLOff
-    x1 = bar_index - cupLowOff
-    x2 = bar_index - rOff
-    line.new(x0, cupL, x1, cupLow, color = color.new(color.orange, 30), width = 2)
-    line.new(x1, cupLow, x2, R, color = color.new(color.orange, 30), width = 2)
-    line.new(x2, R, bar_index, R, color = color.new(color.orange, 30), width = 1, style = line.style_dotted)
-    label.new(x2, R, "C&H " + str.tostring(cupPivot, format.mintick), style = label.style_label_down, color = color.orange, textcolor = color.white, size = size.small)
-if newBase and flatOk
-    box.new(bar_index - flatLen + 1, flatHH, bar_index, flatLL, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 90))
-    label.new(bar_index, flatHH, "Flat " + str.tostring(flatPivot, format.mintick), style = label.style_label_down, color = color.blue, textcolor = color.white, size = size.small)
-
-var table tb = table.new(position.top_right, 2, 4, border_width = 1)
+var table tb = table.new(position.top_right, 2, 5, border_width = 1)
 if barstate.islast
     fg = chart.fg_color
     table.cell(tb, 0, 0, "Base", text_color = fg)
-    table.cell(tb, 1, 0, not timeframe.isdaily ? "Use DAILY chart" : baseOk ? baseType : "None", text_color = fg)
+    table.cell(tb, 1, 0, not timeframe.isdaily ? "Use DAILY chart" : baseOk ? actType : "None", text_color = fg)
     table.cell(tb, 0, 1, "Pivot", text_color = fg)
-    table.cell(tb, 1, 1, baseOk ? str.tostring(pivot, format.mintick) : "—", text_color = fg)
+    table.cell(tb, 1, 1, baseOk ? str.tostring(actPivot, format.mintick) : "—", text_color = fg)
     table.cell(tb, 0, 2, "vs pivot", text_color = fg)
-    table.cell(tb, 1, 2, baseOk ? str.tostring((close / pivot - 1) * 100, "#.##") + "%" : "—", text_color = fg)
-    table.cell(tb, 0, 3, "Trend", text_color = fg)
-    table.cell(tb, 1, 3, trendOk ? "OK (> 200d)" : "Below 200d", text_color = trendOk ? color.green : color.red)
+    table.cell(tb, 1, 2, baseOk ? str.tostring((close / actPivot - 1) * 100, "#.##") + "%" : "—", text_color = fg)
+    table.cell(tb, 0, 3, "Days in base", text_color = fg)
+    table.cell(tb, 1, 3, baseOk ? str.tostring(bar_index - actBar) : "—", text_color = fg)
+    table.cell(tb, 0, 4, "Trend", text_color = fg)
+    table.cell(tb, 1, 4, trendOk ? "OK (> 200d)" : "Below 200d", text_color = trendOk ? color.green : color.red)
 
 // ── Alerts ────────────────────────────────────────────────────────────────
-// Option A: create ONE alert with condition "Any alert() function call" to get all four events
+// Option A: create ONE alert with condition "Any alert() function call" to get all events
 if newBase
-    alert(syminfo.ticker + ": " + baseType + " detected. Pivot " + str.tostring(pivot, format.mintick) + ", close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + ": " + actType + " detected. Pivot " + str.tostring(actPivot, format.mintick) + ", close " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
 if nearEvent
-    alert(syminfo.ticker + ": within " + str.tostring(nearPct) + "% of " + baseType + " pivot " + str.tostring(pivot, format.mintick), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + ": within " + str.tostring(nearPct) + "% of " + actType + " pivot " + str.tostring(actPivot, format.mintick), alert.freq_once_per_bar_close)
 if crossPx
-    alert(syminfo.ticker + ": crossing " + lastType + " pivot " + str.tostring(lastPivot, format.mintick) + " intraday — check volume", alert.freq_once_per_bar)
+    alert(syminfo.ticker + ": crossing " + evtType + " pivot " + str.tostring(evtPivot, format.mintick) + " intraday — check volume", alert.freq_once_per_bar)
 if volBreak
-    alert(syminfo.ticker + ": VOLUME-CONFIRMED BREAKOUT from " + lastType + ". Pivot " + str.tostring(lastPivot, format.mintick) + ", vol " + str.tostring(volume / avgVol[1], "#.#") + "x avg. Buy zone to " + str.tostring(lastPivot * (1 + buyZonePct / 100), format.mintick), alert.freq_once_per_bar_close)
+    alert(syminfo.ticker + ": VOLUME-CONFIRMED BREAKOUT from " + evtType + ". Pivot " + str.tostring(evtPivot, format.mintick) + ", vol " + str.tostring(volume / avgVol[1], "#.#") + "x avg. Buy zone to " + str.tostring(evtPivot * (1 + buyZonePct / 100), format.mintick), alert.freq_once_per_bar_close)
 
 // Option B: individual conditions (pick one per alert)
 alertcondition(newBase, "1. Base detected", "{{ticker}}: CAN SLIM base detected. Pivot {{plot(\"Pivot\")}}, close {{close}}")
