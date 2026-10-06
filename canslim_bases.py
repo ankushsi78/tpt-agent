@@ -19,6 +19,7 @@ import datetime as dt
 import math
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -326,10 +327,15 @@ def build_status(tickers, cfg, extra=None):
     p = cfg["bases"]
     data = yf.download(tickers, period="5y", auto_adjust=False,   # split- but not dividend-adjusted, like TradingView
                         group_by="ticker", threads=True, progress=False)
-    rows = []
+    # CAN SLIM decisions use the daily CLOSE: drop today's unfinished bar while the market is open (or pre-close)
+    now_et = dt.datetime.now(ZoneInfo("America/New_York"))
+    cutoff = pd.Timestamp(now_et.date()) if now_et.time() < dt.time(16, 15) else pd.Timestamp(now_et.date()) + pd.Timedelta(days=1)
+    rows, asof = [], pd.Timestamp(0)
     for t in tickers:
         try:
             df = (data[t] if isinstance(data.columns, pd.MultiIndex) else data).dropna()
+            df = df[df.index < cutoff]
+            asof = max(asof, df.index[-1]) if len(df) else asof
             if len(df) < 300:
                 rows.append({"Ticker": t, "Status": "Not enough history", "Note": f"{len(df)} daily bars"})
                 continue
@@ -345,7 +351,9 @@ def build_status(tickers, cfg, extra=None):
         out = out[COLS[:2] + [c for c in ("RS", "Group Rank", "CAN SLIM Checks") if c in out] + COLS[2:]]
     out["_o"] = out["Status"].map({s: i for i, s in enumerate(STATUS_ORDER)}).fillna(99)
     out["_v"] = pd.to_numeric(out["% vs Pivot"], errors="coerce").fillna(-999)
-    return out.sort_values(["_o", "_v"], ascending=[True, False]).drop(columns=["_o", "_v"]).reset_index(drop=True)
+    out = out.sort_values(["_o", "_v"], ascending=[True, False]).drop(columns=["_o", "_v"]).reset_index(drop=True)
+    out.attrs["asof"] = asof.strftime("%b %d")
+    return out
 
 
 # ── Google Sheet ──────────────────────────────────────────────────────────────
@@ -406,7 +414,7 @@ def write_status(sh, df, note):
 def status_note(df):
     counts = df["Status"].value_counts()
     parts = [f"{counts[s]} {s.lower()}" for s in STATUS_ORDER if s in counts]
-    return (f"Updated {dt.datetime.now():%Y-%m-%d %H:%M} · " + ", ".join(parts) +
+    return (f"Updated {dt.datetime.now():%Y-%m-%d %H:%M} (prices as of the {df.attrs.get('asof', 'last')} close) · " + ", ".join(parts) +
             " · Same rules as the TradingView 'CANSLIM' indicator (pivot frozen per base; BUY = close in buy zone on ≥1.4× volume)")
 
 
