@@ -7,7 +7,7 @@ which tracks Robinhood's mark. Only column O of OPEN rows is written; CLOSED
 rows and every other column are left alone. Rows whose O cell holds a formula,
 or whose contract can't be quoted, are skipped and logged.
 
-Scheduled via launchd: com.ankushsinghal.leapsprice (weekdays 7:30 AM and 12:55 PM PT).
+Scheduled via launchd: com.ankushsinghal.leapsprice (weekdays every 30 min, 6:30 AM–1:00 PM PT).
 Usage:
     python3 leaps_price_updater.py            # update the sheet
     python3 leaps_price_updater.py --dry-run  # print what would change
