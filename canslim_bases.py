@@ -291,7 +291,9 @@ def status_row(tkr, df, p):
         if last_sig:
             age = (df.index[-1] - last_sig[0]).days
             zone_top = last_sig[3] * (1 + p["buyZonePct"] / 100)
-            if last_sig[1] == "BUY" and close <= zone_top:
+            if last_sig[1] == "BUY" and close < last_sig[3]:
+                status, note = "Breakout — back below pivot", f"BUY {age}d ago at {last_sig[3]:.2f}, now back under it — watch the 7–8% stop"
+            elif last_sig[1] == "BUY" and close <= zone_top:
                 status, note = "Breakout — in buy zone", f"BUY {age}d ago; still within 5% of {last_sig[3]:.2f}"
             elif last_sig[1] == "BUY":
                 status, note = "Extended after BUY", f"BUY {age}d ago at {last_sig[3]:.2f}; now past the buy zone — wait for a new base"
@@ -316,7 +318,7 @@ def status_row(tkr, df, p):
     return row
 
 
-STATUS_ORDER = ["Near pivot", "Above pivot (light vol)", "Breakout — in buy zone", "In base",
+STATUS_ORDER = ["Near pivot", "Above pivot (light vol)", "Breakout — in buy zone", "Breakout — back below pivot", "In base",
                 "Extended after BUY", "Extended", "Base failed", "No base"]
 COLS = ["Ticker", "Status", "Base", "Pivot (Buy Point)", "Buy Zone Top", "Close", "% vs Pivot", "Days in Base",
         "Attempts Above Pivot", "Last Signal", "Last Signal Date", "Vol vs 50d", "% Off 52w High", "Trend", "Note"]
@@ -359,7 +361,8 @@ def build_status(tickers, cfg, extra=None):
 # ── Google Sheet ──────────────────────────────────────────────────────────────
 
 STATUS_COLORS = {"Near pivot": (1.0, 0.95, 0.75), "Above pivot (light vol)": (1.0, 0.9, 0.8),
-                 "Breakout — in buy zone": (0.8, 0.94, 0.8), "In base": (0.9, 0.93, 1.0),
+                 "Breakout — in buy zone": (0.8, 0.94, 0.8), "Breakout — back below pivot": (0.98, 0.85, 0.85),
+                 "In base": (0.9, 0.93, 1.0),
                  "Base failed": (0.98, 0.85, 0.85)}
 
 
