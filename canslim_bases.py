@@ -305,7 +305,7 @@ def status_row(tkr, df, p):
                 note = f"Not in a recognized base (last signal {age}d ago)"
         row.update({"Status": status, "Base": "", "Pivot (Buy Point)": "", "Buy Zone Top": "", "% vs Pivot": "",
                     "Days in Base": "", "Attempts Above Pivot": "", "Note": note})
-        if status in ("Breakout — in buy zone", "Extended after BUY", "Extended"):
+        if status in ("Breakout — in buy zone", "Breakout — back below pivot", "Extended after BUY", "Extended"):
             piv = last_sig[3]                                    # the base the stock just left
             row.update({"Base": last_sig[2], "Pivot (Buy Point)": round(piv, 2),
                         "Buy Zone Top": round(piv * (1 + p["buyZonePct"] / 100), 2),
